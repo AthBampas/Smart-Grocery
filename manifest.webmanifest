@@ -1,7 +1,7 @@
 {
-  "name": "Αποθήκη Σπιτιού",
-  "short_name": "Αποθήκη",
-  "description": "Απόθεμα αναλώσιμων και τροφίμων του σπιτιού",
+  "name": "Smart Grocery",
+  "short_name": "Smart Grocery",
+  "description": "Απόθεμα αναλώσιμων και τροφίμων του σπιτιού, σε όλες τις συσκευές",
   "lang": "el",
   "start_url": "./",
   "scope": "./",

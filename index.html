@@ -6,18 +6,19 @@
 <meta name="theme-color" content="#1f7a5c">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-title" content="Αποθήκη">
+<meta name="apple-mobile-web-app-title" content="Smart Grocery">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="apple-touch-icon" href="icon-180.png">
 <link rel="icon" href="icon-192.png">
-<title>Αποθήκη Σπιτιού</title>
+<title>Smart Grocery</title>
 <style>
 :root{--bg:#f5f6f4;--card:#fff;--tx:#1b2420;--mut:#6b7872;--pri:#1f7a5c;--pri-t:#fff;--line:#e3e7e4;--red:#c0392b;--amb:#b7791f}
 @media(prefers-color-scheme:dark){:root{--bg:#111815;--card:#1a2420;--tx:#eaf0ed;--mut:#93a39b;--pri:#34a77f;--pri-t:#06130e;--line:#26332d;--red:#ef6a5b;--amb:#e0a73a}}
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
 html,body{margin:0;background:var(--bg);color:var(--tx);font:16px/1.4 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
-header{position:sticky;top:0;background:var(--pri);color:var(--pri-t);padding:calc(12px + env(safe-area-inset-top)) 16px 12px;font-weight:700;font-size:18px;z-index:5}
+header{position:sticky;top:0;background:var(--pri);color:var(--pri-t);padding:calc(12px + env(safe-area-inset-top)) 16px 12px;font-weight:700;font-size:18px;z-index:5;display:flex;justify-content:space-between;align-items:center;gap:10px}
+#sync{font-size:12px;font-weight:400;opacity:.92;white-space:nowrap}
 main{padding:12px 12px 150px;max-width:640px;margin:0 auto}
 h4{margin:18px 4px 6px;font-size:13px;text-transform:uppercase;letter-spacing:.04em;color:var(--mut)}
 .tools{display:flex;gap:8px;margin-bottom:8px}
@@ -57,21 +58,28 @@ nav .i{font-size:20px}nav button.on{color:var(--pri);font-weight:700}
 .actions .primary,.btn.primary{background:var(--pri);color:var(--pri-t);border-color:var(--pri)}
 .actions .danger,.btn.danger{color:var(--red)}
 .btn{display:block;width:100%;margin-top:8px}
+.btn[disabled]{opacity:.55}
 .hl{font-size:14px;color:var(--mut);padding:3px 0;border-top:1px solid var(--line)}
 .hl:first-child{border-top:0}
-.catrow{display:flex;align-items:center;justify-content:space-between;background:var(--card);border:1px solid var(--line);border-radius:10px;padding:4px 6px 4px 14px;margin-bottom:6px}
+.catrow{display:flex;align-items:center;justify-content:space-between;background:var(--card);border:1px solid var(--line);border-radius:10px;padding:4px 6px 4px 14px;margin-bottom:6px;gap:8px}
+.catrow span:first-child{overflow:hidden;text-overflow:ellipsis}
+.msg{margin:12px 2px 0;font-size:14px;color:var(--pri)}.msg.err{color:var(--red)}
+.link{background:none;border:0;color:var(--pri);font:inherit;font-size:14px;padding:10px;display:block;margin:6px auto 0}
+.setup{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px;margin-top:12px;font-size:15px}
+.setup code{background:var(--bg);padding:1px 6px;border-radius:6px}
 #toast{position:fixed;left:12px;right:12px;bottom:calc(76px + env(safe-area-inset-bottom));max-width:616px;margin:0 auto;background:#222;color:#fff;border-radius:12px;padding:12px 14px;display:none;justify-content:space-between;align-items:center;gap:10px;z-index:20}
 #toast.show{display:flex}
 #toast button{background:none;border:0;color:#7ee0b8;font:inherit;font-weight:700}
 </style>
 </head>
 <body>
-<header>📦 Αποθήκη Σπιτιού</header>
+<header><span>🛒 Smart Grocery</span><span id="sync"></span></header>
 <main id="main"></main>
-<button id="fab" data-act="new" aria-label="Νέο είδος">+</button>
-<nav>
+<button id="fab" data-act="new" aria-label="Νέο είδος" style="display:none">+</button>
+<nav style="display:none">
   <button data-act="tab" data-v="stock"><span class="i">📦</span>Απόθεμα</button>
-  <button data-act="tab" data-v="shop"><span class="i">🛒</span>Ψώνια<i class="dot" id="dot" style="display:none"></i></button>
+  <button data-act="tab" data-v="items"><span class="i">🗂️</span>Είδη</button>
+  <button data-act="tab" data-v="shop"><span class="i">📝</span>Ψώνια<i class="dot" id="dot" style="display:none"></i></button>
   <button data-act="tab" data-v="hist"><span class="i">🕘</span>Ιστορικό</button>
   <button data-act="tab" data-v="set"><span class="i">⚙️</span>Ρυθμίσεις</button>
 </nav>
@@ -79,12 +87,14 @@ nav .i{font-size:20px}nav button.on{color:var(--pri);font-weight:700}
 <div id="toast"></div>
 <input type="file" id="file" accept="application/json,.json" hidden>
 
+<script src="config.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
 <script>
 const DEFAULT_CATS=['Χαρτικά','Απορρυπαντικά','Προσωπική υγιεινή','Γαλακτοκομικά','Σνακ','Ξηρά τρόφιμα','Κατεψυγμένα','Φρούτα & Λαχανικά','Ποτά','Άλλο'];
 const UNITS=['τεμ.','πακέτο','συσκ.','ρολά','kg','gr','lt','ml'];
 const COUNT_UNITS=['τεμ.','πακέτο','συσκ.','ρολά'];
 const EXP_DAYS=7;
-const KEY='apothiki_v1';
+const LEGACY_KEY='apothiki_v1';
 const STARTER=[
 ['Χαρτί υγείας','Χαρτικά','ρολά',8],['Χαρτί κουζίνας','Χαρτικά','ρολά',2],['Χαρτομάντιλα','Χαρτικά','πακέτο',2],
 ['Απορρυπαντικό πλυντηρίου ρούχων','Απορρυπαντικά','συσκ.',1],['Μαλακτικό','Απορρυπαντικά','συσκ.',1],['Υγρό πιάτων','Απορρυπαντικά','τεμ.',1],
@@ -99,23 +109,274 @@ const $=s=>document.querySelector(s);
 const esc=s=>String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const fmt=n=>String(Math.round(n*100)/100).replace('.',',');
 const parseNum=v=>parseFloat(String(v).replace(',','.'));
-const uid=()=>Date.now().toString(36)+Math.random().toString(36).slice(2,6);
+function newId(){
+  if(window.crypto&&crypto.randomUUID)return crypto.randomUUID();
+  const b=crypto.getRandomValues(new Uint8Array(16));b[6]=b[6]&15|64;b[8]=b[8]&63|128;
+  const h=[...b].map(x=>x.toString(16).padStart(2,'0')).join('');
+  return h.slice(0,8)+'-'+h.slice(8,12)+'-'+h.slice(12,16)+'-'+h.slice(16,20)+'-'+h.slice(20);
+}
 const localISO=(d=new Date())=>new Date(d.getTime()-d.getTimezoneOffset()*60000).toISOString().slice(0,10);
 const daysTo=s=>Math.round((new Date(s+'T00:00:00')-new Date(localISO()+'T00:00:00'))/864e5);
 const fmtDate=s=>{const p=s.split('-');return p[2]+'/'+p[1]+'/'+p[0]};
 const fmtDT=s=>new Date(s).toLocaleString('el-GR',{dateStyle:'short',timeStyle:'short'});
+const lsGet=k=>{try{return localStorage.getItem(k)}catch(e){return null}};
+function lsPut(k,v){try{localStorage.setItem(k,v);return true}catch(e){return false}}
+function lsDel(k){try{localStorage.removeItem(k)}catch(e){}}
+const jparse=s=>{try{return JSON.parse(s)}catch(e){return null}};
 
+/* ---------- Κατάσταση ---------- */
 function blank(){return{items:[],tx:[],cats:[...DEFAULT_CATS]}}
-function load(){
-  try{const d=JSON.parse(localStorage.getItem(KEY));
-    if(d&&Array.isArray(d.items)&&Array.isArray(d.tx)){d.cats=Array.isArray(d.cats)&&d.cats.length?d.cats:[...DEFAULT_CATS];return d}
-  }catch(e){}
-  return blank();
-}
-let S=load();
-function save(){try{localStorage.setItem(KEY,JSON.stringify(S))}catch(e){toast('Αποτυχία αποθήκευσης!')}}
-const ui={tab:'stock',q:'',f:'all',cat:''};
+const CFG=window.SG_CONFIG||{};
+const configured=!!(CFG.SUPABASE_URL&&/^https:\/\/.+/.test(CFG.SUPABASE_URL)&&CFG.SUPABASE_ANON_KEY&&String(CFG.SUPABASE_ANON_KEY).length>40);
+const APP_URL=location.origin+location.pathname;
+let S=blank(),user=null,queue=[],sb=null,chan=null;
+let flushing=false,pulling=false,pullPending=false,pullTimer=null,retryTimer=null,syncErr=false,localVer=0;
+const mine=new Set();
+const ui={screen:'loading',tab:'stock',q:'',f:'all',cat:'',authMode:'login',authEmail:''};
 const item=id=>S.items.find(i=>i.id===id);
+
+function persist(){
+  if(!user)return;
+  const a=lsPut('sg_data_'+user.id,JSON.stringify(S)),b=lsPut('sg_queue_'+user.id,JSON.stringify(queue));
+  if(!a||!b)toast('Αποτυχία τοπικής αποθήκευσης');
+}
+const save=persist;
+function loadLocal(uid){
+  const d=jparse(lsGet('sg_data_'+uid));
+  S=(d&&Array.isArray(d.items)&&Array.isArray(d.tx))?d:blank();
+  if(!Array.isArray(S.cats)||!S.cats.length)S.cats=[...DEFAULT_CATS];
+  const q=jparse(lsGet('sg_queue_'+uid));
+  queue=Array.isArray(q)?q:[];
+}
+
+/* ---------- Αντιστοίχιση με τη βάση ---------- */
+const itemRow=i=>({id:i.id,user_id:user.id,name:i.name,cat:i.cat,unit:i.unit,min_qty:i.min||0,barcode:i.barcode||''});
+const txRow=t=>({id:t.id,user_id:user.id,item_id:t.itemId,type:t.type,qty:t.qty,expiry:t.expiry||null,created_at:t.date});
+const fromItem=r=>({id:r.id,name:r.name,cat:r.cat,unit:r.unit,min:Number(r.min_qty)||0,barcode:r.barcode||''});
+function fromTx(r){const t={id:r.id,itemId:r.item_id,type:r.type,qty:Number(r.qty),date:new Date(r.created_at).toISOString()};if(r.expiry)t.expiry=r.expiry;return t}
+
+function markMine(id){mine.add(id);setTimeout(()=>mine.delete(id),20000)}
+function enqueue(table,op,payload,key){
+  queue.push({table,op,payload});localVer++;
+  if(key)markMine(key);
+  persist();updateSync();flush();
+}
+const pushItem=i=>enqueue('items','upsert',itemRow(i),i.id);
+const pushTx=t=>enqueue('tx','upsert',txRow(t),t.id);
+const delItemRemote=id=>{S.tx.filter(t=>t.itemId===id).forEach(t=>markMine(t.id));enqueue('items','delete',{id},id)};
+const delTxRemote=id=>enqueue('tx','delete',{id},id);
+const pushCats=()=>enqueue('settings','upsert',{user_id:user.id,cats:S.cats},user.id);
+
+/* ---------- Συγχρονισμός ---------- */
+function permanent(r){const s=r.status;return s>=400&&s<500&&![401,408,429].includes(s)}
+async function flush(){
+  if(!sb||!user||user.offline||flushing||!navigator.onLine)return;
+  flushing=true;updateSync();
+  let dropped=false;
+  try{
+    while(queue.length){
+      const op=queue[0];
+      let r;
+      if(op.op==='upsert')r=await sb.from(op.table).upsert(op.payload,op.table==='settings'?{onConflict:'user_id'}:undefined);
+      else r=await sb.from(op.table).delete().eq('id',op.payload.id);
+      if(r.error){
+        if(permanent(r)){queue.shift();persist();dropped=true;continue}
+        throw r.error;
+      }
+      queue.shift();persist();
+    }
+    syncErr=false;
+  }catch(e){
+    syncErr=true;
+    clearTimeout(retryTimer);retryTimer=setTimeout(flush,15000);
+  }finally{flushing=false;updateSync()}
+  if(dropped){toast('Κάποια αλλαγή δεν μπόρεσε να αποθηκευτεί και ακυρώθηκε');pullPending=true}
+  if(!queue.length&&pullPending){pullPending=false;pull()}
+}
+async function fetchAll(table){
+  let all=[],from=0;const step=1000;
+  for(;;){
+    const {data,error}=await sb.from(table).select('*').order('created_at',{ascending:true}).order('id',{ascending:true}).range(from,from+step-1);
+    if(error)throw error;
+    all=all.concat(data);
+    if(data.length<step)break;
+    from+=step;
+  }
+  return all;
+}
+async function pull(){
+  if(!sb||!user||user.offline||!navigator.onLine)return;
+  if(pulling)return;
+  if(queue.length||flushing){pullPending=true;return}
+  pulling=true;const ver=localVer;
+  try{
+    const [it,tx,st]=await Promise.all([fetchAll('items'),fetchAll('tx'),sb.from('settings').select('*').maybeSingle()]);
+    if(st.error)throw st.error;
+    if(queue.length||flushing||ver!==localVer){pullPending=true;return}
+    S.items=it.map(fromItem);
+    S.tx=tx.map(fromTx);
+    if(st.data&&Array.isArray(st.data.cats)&&st.data.cats.length)S.cats=st.data.cats;
+    persist();syncErr=false;refresh();
+    if(!st.data)pushCats();
+  }catch(e){syncErr=true}
+  finally{pulling=false;updateSync()}
+}
+function schedulePull(){clearTimeout(pullTimer);pullTimer=setTimeout(pull,500)}
+function subscribe(){
+  unsubscribe();
+  try{
+    chan=sb.channel('sg-'+user.id);
+    ['items','tx','settings'].forEach(t=>chan.on('postgres_changes',{event:'*',schema:'public',table:t},p=>{
+      const id=(p.new&&(p.new.id||p.new.user_id))||(p.old&&(p.old.id||p.old.user_id));
+      if(id&&mine.has(id))return;
+      schedulePull();
+    }));
+    chan.subscribe();
+  }catch(e){}
+}
+function unsubscribe(){try{if(chan&&sb)sb.removeChannel(chan)}catch(e){}chan=null}
+
+function syncLabel(){
+  if(!user)return '';
+  const n=queue.length?' · '+queue.length+' εκκρεμούν':'';
+  if(!navigator.onLine||user.offline)return '📴 Εκτός σύνδεσης'+n;
+  if(syncErr)return '⚠️ Δεν συγχρονίστηκε'+n;
+  if(queue.length||flushing)return '🔄 Συγχρονισμός…';
+  return '☁️ Συγχρονισμένο';
+}
+function updateSync(){
+  const e=$('#sync');if(e)e.textContent=(user&&ui.screen==='app')?syncLabel():'';
+  const s=$('#syncset');if(s)s.textContent=syncLabel();
+}
+
+/* ---------- Σύνδεση / λογαριασμός ---------- */
+function trErr(e){
+  const m=String((e&&e.message)||e);
+  if(/Invalid login credentials/i.test(m))return 'Λάθος email ή κωδικός';
+  if(/already registered|already exists/i.test(m))return 'Υπάρχει ήδη λογαριασμός με αυτό το email';
+  if(/not confirmed/i.test(m))return 'Το email δεν έχει επιβεβαιωθεί. Έλεγξε τα εισερχόμενά σου.';
+  if(/at least \d+ char/i.test(m))return 'Ο κωδικός είναι πολύ μικρός';
+  if(/rate limit|too many|security purposes/i.test(m))return 'Πολλές προσπάθειες. Δοκίμασε ξανά σε λίγο.';
+  if(/valid email|invalid.*email/i.test(m))return 'Μη έγκυρο email';
+  if(/fetch|network/i.test(m))return 'Δεν υπάρχει σύνδεση με το internet';
+  return 'Κάτι πήγε στραβά: '+m;
+}
+function setAuthMsg(t,err){const e=$('#amsg');if(e){e.textContent=t||'';e.className='msg'+(err?' err':'')}}
+function setBusy(b){const e=$('#authgo');if(e)e.disabled=b}
+async function authGo(){
+  const email=($('#a_email').value||'').trim(),pass=$('#a_pass').value||'';
+  ui.authEmail=email;
+  const reg=ui.authMode==='register';
+  if(!email||!pass)return setAuthMsg('Γράψε email και κωδικό',true);
+  if(reg&&pass.length<8)return setAuthMsg('Ο κωδικός πρέπει να έχει τουλάχιστον 8 χαρακτήρες',true);
+  if(!sb)return setAuthMsg('Δεν υπάρχει σύνδεση με τον διακομιστή. Έλεγξε το internet και ξανάνοιξε την εφαρμογή.',true);
+  setBusy(true);setAuthMsg('');
+  try{
+    if(reg){
+      const {data,error}=await sb.auth.signUp({email,password:pass,options:{emailRedirectTo:APP_URL}});
+      if(error)throw error;
+      if(data.session)await onSession(data.session);
+      else{ui.authMode='login';render();$('#a_email').value=email;setAuthMsg('Σου στείλαμε email επιβεβαίωσης. Πάτα τον σύνδεσμο και μετά κάνε σύνδεση.')}
+    }else{
+      const {data,error}=await sb.auth.signInWithPassword({email,password:pass});
+      if(error)throw error;
+      if(data.session)await onSession(data.session);
+    }
+  }catch(e){setAuthMsg(trErr(e),true)}
+  finally{setBusy(false)}
+}
+async function forgot(){
+  const email=($('#a_email').value||'').trim();
+  if(!email)return setAuthMsg('Γράψε πρώτα το email σου',true);
+  if(!sb)return setAuthMsg('Δεν υπάρχει σύνδεση με τον διακομιστή',true);
+  try{
+    const {error}=await sb.auth.resetPasswordForEmail(email,{redirectTo:APP_URL});
+    if(error)throw error;
+    setAuthMsg('Αν υπάρχει λογαριασμός, στάλθηκε email με οδηγίες.');
+  }catch(e){setAuthMsg(trErr(e),true)}
+}
+async function onSession(session){
+  if(user&&user.id===session.user.id&&!user.offline)return;
+  user={id:session.user.id,email:session.user.email,offline:false};
+  lsPut('sg_last_user',JSON.stringify({id:user.id,email:user.email}));
+  loadLocal(user.id);
+  ui.screen='app';render(true);
+  subscribe();
+  await flush();
+  await pull();
+  checkLegacy();
+}
+function goOffline(last){
+  user={id:last.id,email:last.email,offline:true};
+  loadLocal(user.id);ui.screen='app';render(true);
+}
+async function doSignOut(){
+  if(queue.length&&!confirm('Υπάρχουν αλλαγές που δεν έχουν συγχρονιστεί και θα χαθούν. Να συνεχίσω;'))return;
+  const uid=user.id;
+  unsubscribe();
+  lsDel('sg_data_'+uid);lsDel('sg_queue_'+uid);lsDel('sg_last_user');
+  user=null;S=blank();queue=[];
+  try{if(sb)await sb.auth.signOut()}catch(e){}
+  ui.screen='auth';ui.tab='stock';render(true);
+}
+function sessionLost(){
+  unsubscribe();user=null;S=blank();queue=[];ui.screen='auth';render(true);
+}
+async function boot(){
+  if(!configured){ui.screen='setup';render(true);return}
+  if(window.supabase){
+    sb=window.supabase.createClient(CFG.SUPABASE_URL,CFG.SUPABASE_ANON_KEY,{auth:{persistSession:true,autoRefreshToken:true,detectSessionInUrl:true}});
+    sb.auth.onAuthStateChange((ev,session)=>{
+      setTimeout(()=>{
+        if(ev==='PASSWORD_RECOVERY'&&session){onSession(session).then(newPassSheet);return}
+        if(session&&(!user||user.id!==session.user.id||user.offline))onSession(session);
+        else if(!session&&user&&!user.offline&&ev==='SIGNED_OUT')sessionLost();
+      },0);
+    });
+  }
+  let session=null,err=null;
+  if(sb){try{const r=await sb.auth.getSession();session=r.data.session;err=r.error}catch(e){err=e}}
+  if(session){await onSession(session);return}
+  const last=jparse(lsGet('sg_last_user'));
+  if(last&&last.id&&(!sb||!navigator.onLine||err)){goOffline(last);return}
+  ui.screen='auth';render(true);
+}
+
+/* ---------- Μεταφορά παλιών τοπικών δεδομένων ---------- */
+function checkLegacy(){
+  if(!user||lsGet('sg_legacy_done_'+user.id))return;
+  const d=jparse(lsGet(LEGACY_KEY));
+  if(!d||!Array.isArray(d.items)||!d.items.length||!Array.isArray(d.tx))return;
+  sheet(`<h3>Βρέθηκαν παλιά δεδομένα</h3>
+  <p class="meta">Σε αυτή τη συσκευή υπάρχουν ${d.items.length} είδη και ${d.tx.length} κινήσεις από την προηγούμενη έκδοση. Να μεταφερθούν στον λογαριασμό σου ${esc(user.email)};</p>
+  <div class="actions"><button data-act="legacyno">Όχι</button><button class="primary" data-act="legacyyes">Μεταφορά</button></div>`);
+}
+function importData(d){
+  const map={};let ni=0,nt=0;
+  const existing=new Map(S.items.map(i=>[i.name.toLowerCase(),i]));
+  (d.items||[]).forEach(o=>{
+    const name=String((o&&o.name)||'').trim();if(!name)return;
+    let it=existing.get(name.toLowerCase());
+    if(!it){
+      it={id:newId(),name,cat:o.cat||'Άλλο',unit:o.unit||'τεμ.',min:Number(o.min)||0,barcode:o.barcode||''};
+      S.items.push(it);existing.set(name.toLowerCase(),it);pushItem(it);ni++;
+    }
+    map[o.id]=it.id;
+  });
+  (d.tx||[]).forEach(t=>{
+    const iid=map[t.itemId];const q=Number(t.qty);
+    if(!iid||!(q>0))return;
+    const x={id:newId(),itemId:iid,type:t.type==='out'?'out':'in',qty:q,date:isNaN(Date.parse(t.date))?new Date().toISOString():new Date(t.date).toISOString()};
+    if(t.expiry&&/^\d{4}-\d{2}-\d{2}$/.test(t.expiry))x.expiry=t.expiry;
+    S.tx.push(x);pushTx(x);nt++;
+  });
+  let catsChanged=false;
+  (d.cats||[]).forEach(c=>{if(typeof c==='string'&&c&&!S.cats.includes(c)){S.cats.push(c);catsChanged=true}});
+  S.items.forEach(i=>{if(!S.cats.includes(i.cat)){S.cats.push(i.cat);catsChanged=true}});
+  if(catsChanged)pushCats();
+  persist();render();
+  return{ni,nt};
+}
 
 /* ---------- Υπολογισμοί ---------- */
 function stockOf(id){let s=0;for(const t of S.tx)if(t.itemId===id)s+=t.type==='in'?t.qty:-t.qty;return Math.round(s*1000)/1000}
@@ -139,23 +400,57 @@ function shopItems(){
 }
 
 /* ---------- Προβολές ---------- */
-function render(){
+function updateDot(){const n=shopItems().length,dot=$('#dot');dot.textContent=n;dot.style.display=n?'':'none'}
+function render(top){
+  const app=ui.screen==='app';
   const v=$('#main');
-  v.innerHTML=ui.tab==='stock'?viewStock():ui.tab==='shop'?viewShop():ui.tab==='hist'?viewHist():viewSet();
+  if(ui.screen==='loading')v.innerHTML='<div class="empty">Φόρτωση…</div>';
+  else if(ui.screen==='setup')v.innerHTML=viewSetup();
+  else if(ui.screen==='auth')v.innerHTML=viewAuth();
+  else v.innerHTML=(ui.tab==='stock'||ui.tab==='items')?viewStock():ui.tab==='shop'?viewShop():ui.tab==='hist'?viewHist():viewSet();
   document.querySelectorAll('nav button').forEach(b=>b.classList.toggle('on',b.dataset.v===ui.tab));
-  $('#fab').style.display=ui.tab==='stock'?'flex':'none';
-  const n=shopItems().length,dot=$('#dot');dot.textContent=n;dot.style.display=n?'':'none';
-  window.scrollTo(0,0);
+  $('nav').style.display=app?'flex':'none';
+  $('#fab').style.display=(app&&(ui.tab==='stock'||ui.tab==='items'))?'flex':'none';
+  if(app)updateDot();
+  updateSync();
+  if(top)window.scrollTo(0,0);
+}
+function refresh(){
+  if(ui.screen!=='app')return;
+  const ae=document.activeElement;
+  if((ui.tab==='stock'||ui.tab==='items')&&$('#list')){$('#list').innerHTML=listStock();updateDot()}
+  else if(ae&&(ae.tagName==='INPUT'||ae.tagName==='SELECT')){updateDot()}
+  else render();
+  updateSync();
+}
+function viewSetup(){
+  return `<div style="padding:24px 4px"><div style="text-align:center;margin:12px 0"><div style="font-size:48px">🛒</div><div class="big" style="font-size:28px">Smart Grocery</div></div>
+  <div class="setup"><b>Απαιτείται ρύθμιση</b><p>Δεν έχει οριστεί ακόμα η σύνδεση με τη βάση δεδομένων. Άνοιξε το αρχείο <code>config.js</code> στο GitHub και βάλε το Project URL και το anon key από το Supabase.</p></div></div>`;
+}
+function viewAuth(){
+  const reg=ui.authMode==='register';
+  return `<div style="padding:16px 4px">
+  <div style="text-align:center;margin:12px 0 20px"><div style="font-size:48px">🛒</div><div class="big" style="font-size:28px">Smart Grocery</div><p class="meta">Το απόθεμα του σπιτιού σου, σε όλες τις συσκευές.</p></div>
+  <label>Email<input id="a_email" type="email" autocomplete="email" inputmode="email" value="${esc(ui.authEmail)}"></label>
+  <label>Κωδικός<input id="a_pass" type="password" autocomplete="${reg?'new-password':'current-password'}"></label>
+  <p id="amsg" class="msg"></p>
+  <button id="authgo" class="btn primary" data-act="authgo">${reg?'Δημιουργία λογαριασμού':'Σύνδεση'}</button>
+  <button class="btn" data-act="authmode">${reg?'Έχω ήδη λογαριασμό':'Νέος λογαριασμός'}</button>
+  ${reg?'':'<button class="link" data-act="forgot">Ξέχασα τον κωδικό</button>'}
+  </div>`;
 }
 function viewStock(){
   const cats='<option value="">Όλες οι κατηγορίες</option>'+S.cats.map(c=>`<option ${ui.cat===c?'selected':''}>${esc(c)}</option>`).join('');
-  const chips=[['all','Όλα'],['low','Χαμηλό απόθεμα'],['exp','Λήγουν σύντομα']].map(([k,l])=>`<button class="chip ${ui.f===k?'on':''}" data-act="filter" data-v="${k}">${l}</button>`).join('');
+  const defs=ui.tab==='items'?[['all','Όλα'],['none','Χωρίς απόθεμα']]:[['all','Όλα'],['low','Χαμηλό απόθεμα'],['exp','Λήγουν σύντομα']];
+  const chips=defs.map(([k,l])=>`<button class="chip ${ui.f===k?'on':''}" data-act="filter" data-v="${k}">${l}</button>`).join('');
   return `<div class="tools"><input id="q" type="search" placeholder="Αναζήτηση…" value="${esc(ui.q)}"><select id="catsel">${cats}</select></div><div class="chips">${chips}</div><div id="list">${listStock()}</div>`;
 }
 function listStock(){
   if(!S.items.length)return '<div class="empty">Δεν υπάρχουν είδη ακόμα.<br>Πάτα το <b>+</b> για να προσθέσεις το πρώτο ή φόρτωσε βασικά είδη από τις Ρυθμίσεις.</div>';
   const q=ui.q.trim().toLowerCase();
-  const a=S.items.map(info).filter(i=>(!q||i.name.toLowerCase().includes(q)||(i.barcode||'').includes(q))&&(!ui.cat||i.cat===ui.cat)&&(ui.f==='all'||(ui.f==='low'&&i.low)||(ui.f==='exp'&&i.soon)));
+  const base=S.items.map(info).filter(i=>ui.tab==='items'||i.st>0);
+  if(!base.length)return '<div class="empty">Δεν υπάρχει απόθεμα αυτή τη στιγμή.<br>Πρόσθεσε ποσότητα από την καρτέλα <b>Είδη</b>, με το <b>+</b> δίπλα στο προϊόν.</div>';
+  const a=base.filter(i=>(!q||i.name.toLowerCase().includes(q)||(i.barcode||'').includes(q))&&(!ui.cat||i.cat===ui.cat)&&(ui.f==='all'||(ui.f==='low'&&i.low)||(ui.f==='exp'&&i.soon)||(ui.f==='none'&&i.st<=0)));
   if(!a.length)return '<div class="empty">Κανένα αποτέλεσμα.</div>';
   const groups={};
   a.forEach(i=>{const c=S.cats.includes(i.cat)?i.cat:'Άλλο';(groups[c]=groups[c]||[]).push(i)});
@@ -176,17 +471,21 @@ function viewShop(){
     `<div class="row"><div class="info"><b>${esc(i.name)}</b><small>Απόθεμα ${fmt(i.st)} / ελάχ. ${fmt(i.min)} ${esc(i.unit)} · πρόταση: ${fmt(i.need)}</small></div><button class="rb add" style="width:auto;padding:0 12px;font-size:14px" data-act="buy" data-id="${i.id}">Αγόρασα</button></div>`).join('');
 }
 function viewHist(){
-  const a=[...S.tx].sort((x,y)=>y.date.localeCompare(x.date)).slice(0,150);
+  const a=[...S.tx].sort((x,y)=>Date.parse(y.date)-Date.parse(x.date)).slice(0,150);
   if(!a.length)return '<div class="empty">Δεν υπάρχουν κινήσεις ακόμα.</div>';
   return a.map(t=>{const it=item(t.itemId);if(!it)return '';
     return `<div class="row"><div class="info"><b>${esc(it.name)}</b><small>${fmtDT(t.date)}${t.expiry?' · λήξη '+fmtDate(t.expiry):''}</small></div><div class="q ${t.type}">${t.type==='in'?'+':'−'}${fmt(t.qty)} ${esc(it.unit)}</div><button class="x" data-act="deltx" data-id="${t.id}" aria-label="Διαγραφή κίνησης">✕</button></div>`}).join('');
 }
 function viewSet(){
   const used=c=>S.items.some(i=>i.cat===c);
-  return `<h4>Αντίγραφο ασφαλείας</h4>
-  <p class="meta">Τα δεδομένα αποθηκεύονται μόνο σε αυτή τη συσκευή. Κάνε εξαγωγή αντιγράφου τακτικά, ειδικά πριν αλλάξεις κινητό.</p>
+  return `<h4>Λογαριασμός</h4>
+  <div class="catrow"><span>${esc(user?user.email:'')}</span><span class="meta" id="syncset" style="margin:0 6px;white-space:nowrap">${syncLabel()}</span></div>
+  <button class="btn" data-act="syncnow">Συγχρονισμός τώρα</button>
+  <button class="btn" data-act="signout">Αποσύνδεση</button>
+  <h4>Αντίγραφο ασφαλείας</h4>
+  <p class="meta">Τα δεδομένα σου αποθηκεύονται στον λογαριασμό σου και είναι διαθέσιμα σε κάθε συσκευή. Το αρχείο αντιγράφου είναι επιπλέον προστασία.</p>
   <button class="btn primary" data-act="export">Εξαγωγή αντιγράφου</button>
-  <button class="btn" data-act="import">Εισαγωγή από αντίγραφο</button>
+  <button class="btn" data-act="import">Εισαγωγή από αντίγραφο (προσθέτει στα υπάρχοντα)</button>
   <h4>Κατηγορίες</h4>
   ${S.cats.map(c=>`<div class="catrow"><span>${esc(c)}</span>${used(c)?'<span class="meta" style="margin:0 8px">σε χρήση</span>':`<button class="x" data-act="delcat" data-v="${esc(c)}" aria-label="Διαγραφή">✕</button>`}</div>`).join('')}
   <div class="tools" style="margin-top:8px"><input id="newcat" placeholder="Νέα κατηγορία"><button class="btn primary" style="width:auto;margin:0;padding:0 16px" data-act="addcat">Προσθήκη</button></div>
@@ -195,12 +494,17 @@ function viewSet(){
   <button class="btn" data-act="starter">Φόρτωση βασικών ειδών</button>
   <h4>Επικίνδυνη ζώνη</h4>
   <button class="btn danger" data-act="wipe">Διαγραφή όλων των δεδομένων</button>
-  <p class="meta" style="text-align:center;margin-top:24px">Αποθήκη Σπιτιού v1.0</p>`;
+  <p class="meta" style="text-align:center;margin-top:24px">Smart Grocery v2.0</p>`;
 }
 
 /* ---------- Φύλλα (modals) ---------- */
 function sheet(html){$('#sheet').innerHTML='<div class="card">'+html+'</div>';$('#sheetwrap').classList.add('open')}
 function closeSheet(){$('#sheetwrap').classList.remove('open');$('#sheet').innerHTML=''}
+function newPassSheet(){
+  sheet(`<h3>Νέος κωδικός</h3>
+  <label>Νέος κωδικός (τουλάχιστον 8 χαρακτήρες)<input id="np" type="password" autocomplete="new-password"></label>
+  <div class="actions"><button data-act="close">Άκυρο</button><button class="primary" data-act="savepass">Αποθήκευση</button></div>`);
+}
 function qtySheet(id,type,def){
   const it=item(id);
   sheet(`<h3>${type==='in'?'Εισαγωγή':'Κατανάλωση'}: ${esc(it.name)}</h3>
@@ -211,7 +515,7 @@ function qtySheet(id,type,def){
 }
 function detailSheet(id){
   const i=info(item(id));
-  const hist=S.tx.filter(t=>t.itemId===id).slice(-8).reverse();
+  const hist=S.tx.filter(t=>t.itemId===id).sort((a,b)=>Date.parse(a.date)-Date.parse(b.date)).slice(-8).reverse();
   sheet(`<h3>${esc(i.name)}</h3>
   <div class="big">${fmt(i.st)} <span>${esc(i.unit)}</span></div>
   <p class="meta">${esc(i.cat)}${i.min?' · Ελάχιστο: '+fmt(i.min):''}${i.barcode?' · '+esc(i.barcode):''}${i.ex?' · Πλησιέστερη λήξη: '+fmtDate(i.ex):''}</p>
@@ -236,11 +540,11 @@ function itemSheet(id){
 
 /* ---------- Ενέργειες ---------- */
 function addTx(itemId,type,qty,expiry){
-  const t={id:uid(),itemId,type,qty,date:new Date().toISOString()};
+  const t={id:newId(),itemId,type,qty,date:new Date().toISOString()};
   if(expiry)t.expiry=expiry;
-  S.tx.push(t);save();render();
+  S.tx.push(t);pushTx(t);render();
   const it=item(itemId);
-  toast(`${type==='in'?'+':'−'}${fmt(qty)} ${it.unit} · ${it.name}`,()=>{S.tx=S.tx.filter(x=>x.id!==t.id);save();render()});
+  toast(`${type==='in'?'+':'−'}${fmt(qty)} ${it.unit} · ${it.name}`,()=>{S.tx=S.tx.filter(x=>x.id!==t.id);delTxRemote(t.id);render()});
 }
 let tt;
 function toast(msg,undo){
@@ -255,19 +559,20 @@ function hideToast(){$('#toast').classList.remove('show')}
 function saveItem(id){
   const name=$('#f_name').value.trim();
   if(!name)return toast('Γράψε όνομα');
-  let cat=$('#f_cat').value;
-  if(cat==='__new'){cat=$('#f_newcat').value.trim();if(!cat)return toast('Γράψε όνομα κατηγορίας');if(!S.cats.includes(cat))S.cats.push(cat)}
+  let cat=$('#f_cat').value,catAdded=false;
+  if(cat==='__new'){cat=$('#f_newcat').value.trim();if(!cat)return toast('Γράψε όνομα κατηγορίας');if(!S.cats.includes(cat)){S.cats.push(cat);catAdded=true}}
   if(S.items.some(x=>x.id!==id&&x.name.toLowerCase()===name.toLowerCase()))return toast('Υπάρχει ήδη είδος με αυτό το όνομα');
   const unit=$('#f_unit').value,min=parseNum($('#f_min').value)||0,barcode=$('#f_bar').value.trim();
-  if(id){Object.assign(item(id),{name,cat,unit,min,barcode});save();closeSheet();render();toast('Αποθηκεύτηκε');return}
-  const it={id:uid(),name,cat,unit,min,barcode};
-  S.items.push(it);
+  if(catAdded)pushCats();
+  if(id){const it=item(id);Object.assign(it,{name,cat,unit,min,barcode});pushItem(it);closeSheet();render();toast('Αποθηκεύτηκε');return}
+  const it={id:newId(),name,cat,unit,min,barcode};
+  S.items.push(it);pushItem(it);
   const q=parseNum($('#f_qty').value),ex=$('#f_exp').value;
   closeSheet();
-  if(q>0)addTx(it.id,'in',q,ex);else{save();render();toast('Το είδος προστέθηκε')}
+  if(q>0)addTx(it.id,'in',q,ex);else{render();toast('Το είδος προστέθηκε')}
 }
 function saveQty(id,type){
-  const it=item(id);let q=parseNum($('#f_qty').value);
+  let q=parseNum($('#f_qty').value);
   if(!(q>0))return toast('Βάλε ποσότητα μεγαλύτερη από 0');
   if(type==='out'){
     const st=stockOf(id);
@@ -279,10 +584,10 @@ function saveQty(id,type){
 }
 async function doExport(){
   const blob=new Blob([JSON.stringify(S,null,1)],{type:'application/json'});
-  const name='apothiki-'+localISO()+'.json';
+  const name='smart-grocery-'+localISO()+'.json';
   try{
     const f=new File([blob],name,{type:'application/json'});
-    if(navigator.canShare&&navigator.canShare({files:[f]})){await navigator.share({files:[f],title:'Αντίγραφο αποθήκης'});return}
+    if(navigator.canShare&&navigator.canShare({files:[f]})){await navigator.share({files:[f],title:'Αντίγραφο Smart Grocery'});return}
   }catch(e){if(e&&e.name==='AbortError')return}
   const u=URL.createObjectURL(blob),a=document.createElement('a');
   a.href=u;a.download=name;document.body.appendChild(a);a.click();a.remove();
@@ -298,7 +603,7 @@ document.addEventListener('click',e=>{
   const el=e.target.closest('[data-act]');if(!el)return;
   const a=el.dataset.act,id=el.dataset.id,v=el.dataset.v;
   switch(a){
-    case 'tab':ui.tab=v;render();break;
+    case 'tab':ui.tab=v;ui.f='all';render(true);break;
     case 'filter':ui.f=v;render();break;
     case 'detail':detailSheet(id);break;
     case 'out':{const it=item(id);
@@ -311,47 +616,68 @@ document.addEventListener('click',e=>{
     case 'edit':itemSheet(id);break;
     case 'saveitem':saveItem(id||null);break;
     case 'saveqty':saveQty(id,v);break;
-    case 'delitem':if(confirm('Διαγραφή του είδους και όλου του ιστορικού του;')){S.items=S.items.filter(i=>i.id!==id);S.tx=S.tx.filter(t=>t.itemId!==id);save();closeSheet();render()}break;
-    case 'deltx':if(confirm('Διαγραφή αυτής της κίνησης;')){S.tx=S.tx.filter(t=>t.id!==id);save();render()}break;
+    case 'delitem':if(confirm('Διαγραφή του είδους και όλου του ιστορικού του;')){delItemRemote(id);S.items=S.items.filter(i=>i.id!==id);S.tx=S.tx.filter(t=>t.itemId!==id);persist();closeSheet();render()}break;
+    case 'deltx':if(confirm('Διαγραφή αυτής της κίνησης;')){S.tx=S.tx.filter(t=>t.id!==id);delTxRemote(id);render()}break;
     case 'close':closeSheet();break;
     case 'sharelist':shareList();break;
     case 'export':doExport();break;
     case 'import':$('#file').click();break;
-    case 'addcat':{const f=$('#newcat'),c=f.value.trim();if(!c)return;if(S.cats.includes(c))return toast('Υπάρχει ήδη');S.cats.push(c);save();render();break}
-    case 'delcat':S.cats=S.cats.filter(c=>c!==v);save();render();break;
-    case 'starter':{let n=0;
+    case 'addcat':{const f=$('#newcat'),c=f.value.trim();if(!c)return;if(S.cats.includes(c))return toast('Υπάρχει ήδη');S.cats.push(c);pushCats();render();break}
+    case 'delcat':S.cats=S.cats.filter(c=>c!==v);pushCats();render();break;
+    case 'starter':{let n=0,catAdded=false;
       STARTER.forEach(([name,cat,unit,min])=>{
         if(S.items.some(i=>i.name.toLowerCase()===name.toLowerCase()))return;
-        if(!S.cats.includes(cat))S.cats.push(cat);
-        S.items.push({id:uid(),name,cat,unit,min,barcode:''});n++;
+        if(!S.cats.includes(cat)){S.cats.push(cat);catAdded=true}
+        const it={id:newId(),name,cat,unit,min,barcode:''};
+        S.items.push(it);pushItem(it);n++;
       });
-      save();render();toast(n?`Προστέθηκαν ${n} είδη`:'Όλα τα βασικά είδη υπάρχουν ήδη');break}
-    case 'wipe':if(confirm('ΠΡΟΣΟΧΗ: θα διαγραφούν όλα τα είδη και οι κινήσεις. Να συνεχίσω;')){S=blank();save();render();toast('Τα δεδομένα διαγράφηκαν')}break;
+      if(catAdded)pushCats();
+      render();toast(n?`Προστέθηκαν ${n} είδη`:'Όλα τα βασικά είδη υπάρχουν ήδη');break}
+    case 'wipe':if(confirm('ΠΡΟΣΟΧΗ: θα διαγραφούν όλα τα είδη και οι κινήσεις από όλες τις συσκευές. Να συνεχίσω;')){
+      S.items.forEach(i=>delItemRemote(i.id));S.items=[];S.tx=[];persist();render();toast('Τα δεδομένα διαγράφηκαν')}break;
+    case 'authgo':authGo();break;
+    case 'authmode':ui.authEmail=($('#a_email')||{}).value||ui.authEmail;ui.authMode=ui.authMode==='login'?'register':'login';render();break;
+    case 'forgot':forgot();break;
+    case 'signout':doSignOut();break;
+    case 'syncnow':if(!navigator.onLine)toast('Δεν υπάρχει σύνδεση με το internet');else{toast('Συγχρονισμός…');flush().then(()=>{pullPending=false;pull()})}break;
+    case 'legacyyes':{const d=jparse(lsGet(LEGACY_KEY));lsPut('sg_legacy_done_'+user.id,'1');closeSheet();if(d){const r=importData(d);toast(`Μεταφέρθηκαν ${r.ni} είδη και ${r.nt} κινήσεις`)}break}
+    case 'legacyno':lsPut('sg_legacy_done_'+user.id,'1');closeSheet();break;
+    case 'savepass':{const p=($('#np').value||'');if(p.length<8)return toast('Ο κωδικός πρέπει να έχει τουλάχιστον 8 χαρακτήρες');
+      sb.auth.updateUser({password:p}).then(r=>{if(r.error)toast(trErr(r.error));else{closeSheet();toast('Ο κωδικός άλλαξε')}});break}
   }
 });
 $('#sheetwrap').addEventListener('click',e=>{if(e.target===$('#sheetwrap'))closeSheet()});
+document.addEventListener('keydown',e=>{if(e.key==='Enter'&&e.target.id==='a_pass')authGo()});
 document.addEventListener('input',e=>{if(e.target.id==='q'){ui.q=e.target.value;$('#list').innerHTML=listStock()}});
 document.addEventListener('change',e=>{
   if(e.target.id==='catsel'){ui.cat=e.target.value;$('#list').innerHTML=listStock()}
   if(e.target.id==='f_cat'){const n=$('#f_newcat');n.style.display=e.target.value==='__new'?'block':'none';if(e.target.value==='__new')n.focus()}
   if(e.target.id==='file'){
-    const f=e.target.files[0];if(!f)return;
+    const f=e.target.files[0],inp=e.target;if(!f)return;
     const r=new FileReader();
     r.onload=()=>{
       try{
         const d=JSON.parse(r.result);
         if(!d||!Array.isArray(d.items)||!Array.isArray(d.tx))throw 0;
-        if(!confirm('Τα τρέχοντα δεδομένα θα αντικατασταθούν από το αντίγραφο. Να συνεχίσω;'))return;
-        d.cats=Array.isArray(d.cats)&&d.cats.length?d.cats:[...DEFAULT_CATS];
-        S=d;save();render();toast('Η εισαγωγή ολοκληρώθηκε');
+        if(!confirm('Τα δεδομένα του αντιγράφου θα προστεθούν στα υπάρχοντα. Να συνεχίσω;'))return;
+        const res=importData(d);toast(`Προστέθηκαν ${res.ni} είδη και ${res.nt} κινήσεις`);
       }catch(err){toast('Μη έγκυρο αρχείο αντιγράφου')}
-      e.target.value='';
+      inp.value='';
     };
     r.readAsText(f);
   }
 });
+window.addEventListener('online',async()=>{
+  updateSync();
+  if(!sb||!user)return;
+  if(user.offline){try{const r=await sb.auth.getSession();if(r.data.session)await onSession(r.data.session)}catch(e){}}
+  else{await flush();pull()}
+});
+window.addEventListener('offline',updateSync);
+document.addEventListener('visibilitychange',()=>{if(!document.hidden&&user&&!user.offline){flush().then(pull)}});
 
-render();
+render(true);
+boot();
 if(navigator.storage&&navigator.storage.persist)navigator.storage.persist().catch(()=>{});
 if('serviceWorker' in navigator&&location.protocol.startsWith('http'))navigator.serviceWorker.register('sw.js').catch(()=>{});
 </script>
