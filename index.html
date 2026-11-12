@@ -178,7 +178,7 @@ function loadLocal(uid){
 const itemRow=i=>({id:i.id,name:i.name,cat:i.cat,unit:i.unit,min_qty:i.min||0,barcode:i.barcode||''});
 const txRow=t=>({id:t.id,item_id:t.itemId,type:t.type,qty:t.qty,expiry:t.expiry||null,created_at:t.date});
 const fromItem=r=>({id:r.id,name:r.name,cat:r.cat,unit:r.unit,min:Number(r.min_qty)||0,barcode:r.barcode||''});
-function fromTx(r){const t={id:r.id,itemId:r.item_id,type:r.type,qty:Number(r.qty),date:new Date(r.created_at).toISOString(),by:r.user_id};if(r.expiry)t.expiry=r.expiry;return t}
+function fromTx(r){const t={id:r.id,itemId:r.item_id,type:r.type,qty:Number(r.qty),date:new Date(r.created_at).toISOString(),by:r.user_id||'gone'};if(r.expiry)t.expiry=r.expiry;return t}
 
 function markMine(id){mine.add(id);setTimeout(()=>mine.delete(id),20000)}
 function enqueue(table,op,payload,key){
@@ -242,7 +242,7 @@ const hhMembers=()=>(hh&&Array.isArray(hh.members))?hh.members:[];
 const shared=()=>hhMembers().length>1;
 function whoName(uid){
   const m=hhMembers().find(x=>x.user_id===uid);
-  return m?(m.name||'Χωρίς όνομα'):'Άγνωστος';
+  return m?(m.name||'Χωρίς όνομα'):'Πρώην μέλος';
 }
 const fmtCode=c=>String(c||'').replace(/(.{5})(?=.)/g,'$1-');
 async function hhCall(fn,args,okMsg){
@@ -272,6 +272,37 @@ async function afterHouseholdChange(msg){
   S=blank();queue=[];persist();render();
   pullPending=false;await pull();render();
   if(msg)toast(msg);
+}
+function deleteAccountSheet(){
+  if(!user||user.offline||!navigator.onLine)return toast('Η διαγραφή λογαριασμού χρειάζεται σύνδεση στο internet');
+  sheet(`<h3>Διαγραφή λογαριασμού</h3>
+  <p class="meta">Ο λογαριασμός σου (email, κωδικός, όνομα) θα διαγραφεί οριστικά. Δεν αναιρείται.</p>
+  <p class="meta">${shared()?'Το νοικοκυριό έχει και άλλα μέλη: τα κοινά είδη και το απόθεμα μένουν σε αυτά, και οι κινήσεις σου θα φαίνονται ως «Πρώην μέλος».':'Είσαι το μόνο μέλος: θα διαγραφούν και όλα τα είδη, το απόθεμα και το ιστορικό σου.'}</p>
+  <label>Γράψε τον κωδικό σου για επιβεβαίωση<input id="del_pass" type="password" autocomplete="current-password"></label>
+  <div class="actions"><button data-act="close">Άκυρο</button><button class="danger" data-act="delacc">Διαγραφή οριστικά</button></div>`);
+}
+async function deleteAccount(){
+  if(!sb||!user||user.offline||!navigator.onLine)return toast('Χρειάζεται σύνδεση στο internet');
+  const p=($('#del_pass')||{}).value||'';
+  if(!p)return toast('Γράψε τον κωδικό σου');
+  const btn=document.querySelector('[data-act=delacc]');if(btn)btn.disabled=true;
+  try{
+    const a=await sb.auth.signInWithPassword({email:user.email,password:p});
+    if(a.error)throw a.error;
+    const r=await sb.rpc('delete_my_account');
+    if(r.error)throw r.error;
+  }catch(e){
+    if(btn)btn.disabled=false;
+    const m=String((e&&e.message)||e);
+    toast(/Invalid login/i.test(m)?'Λάθος κωδικός':/delete_my_account|function/i.test(m)?'Η διαγραφή δεν είναι ακόμα ενεργοποιημένη στον διακομιστή':trErr(e));
+    return;
+  }
+  const uid=user.id;deletedUid=uid;
+  unsubscribe();
+  ['sg_data_','sg_queue_','sg_hh_','sg_named_','sg_legacy_done_'].forEach(k=>lsDel(k+uid));lsDel('sg_last_user');
+  user=null;S=blank();queue=[];hh=null;
+  try{await sb.auth.signOut({scope:'local'})}catch(e){}
+  closeSheet();ui.screen='auth';ui.tab='stock';render(true);toast('Ο λογαριασμός διαγράφηκε');
 }
 async function joinHousehold(){
   const code=($('#hh_code')||{}).value||'';
@@ -383,7 +414,9 @@ async function forgot(){
     setAuthMsg('Αν υπάρχει λογαριασμός, στάλθηκε email με οδηγίες.');
   }catch(e){setAuthMsg(trErr(e),true)}
 }
+let deletedUid=null;
 async function onSession(session){
+  if(deletedUid&&session.user.id===deletedUid)return;/* λογαριασμός που μόλις διαγράφηκε */
   if(user&&user.id===session.user.id&&!user.offline)return;
   user={id:session.user.id,email:session.user.email,offline:false};
   lsPut('sg_last_user',JSON.stringify({id:user.id,email:user.email}));
@@ -631,6 +664,7 @@ function viewSet(){
   <button class="btn" data-act="starter">Φόρτωση βασικών ειδών</button>
   <h4>Επικίνδυνη ζώνη</h4>
   <button class="btn danger" data-act="wipe">Διαγραφή όλων των δεδομένων</button>
+  <button class="btn danger" data-act="delaccsheet">Διαγραφή λογαριασμού</button>
   <p class="meta" style="text-align:center;margin-top:24px">Smart Grocery v2.0</p>`;
 }
 
@@ -990,6 +1024,8 @@ document.addEventListener('click',e=>{
       else toast('Κωδικός: '+c);break}
     case 'newcode':if(confirm('Ο παλιός κωδικός θα πάψει να ισχύει. Όσοι είναι ήδη μέσα μένουν. Να φτιαχτεί νέος;'))hhCall('new_invite_code',{},'Νέος κωδικός').then(d=>{if(d)render()});break;
     case 'joinhh':joinHousehold();break;
+    case 'delaccsheet':deleteAccountSheet();break;
+    case 'delacc':deleteAccount();break;
     case 'leavehh':leaveHousehold();break;
     case 'detail':detailSheet(id);break;
     case 'out':{const it=item(id);
