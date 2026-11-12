@@ -76,6 +76,9 @@ nav .i{font-size:20px}nav button.on{color:var(--pri);font-weight:700}
 .link{background:none;border:0;color:var(--pri);font:inherit;font-size:14px;padding:10px;display:block;margin:6px auto 0}
 .setup{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px;margin-top:12px;font-size:15px}
 .setup code{background:var(--bg);padding:1px 6px;border-radius:6px}
+.rl{border:1px solid var(--line);border-radius:12px;padding:10px;margin-top:10px}
+.rl.unm{border-color:var(--amb)}
+.rraw{font-size:12px;color:var(--mut);margin-bottom:6px;word-break:break-word}
 #toast{position:fixed;left:12px;right:12px;bottom:calc(76px + env(safe-area-inset-bottom));max-width:616px;margin:0 auto;background:#222;color:#fff;border-radius:12px;padding:12px 14px;display:none;justify-content:space-between;align-items:center;gap:10px;z-index:20}
 #toast.show{display:flex}
 #toast button{background:none;border:0;color:#7ee0b8;font:inherit;font-weight:700}
@@ -102,6 +105,7 @@ nav .i{font-size:20px}nav button.on{color:var(--pri);font-weight:700}
 <div id="sheetwrap"><div id="sheet" style="width:100%;display:flex;justify-content:center"></div></div>
 <div id="toast"></div>
 <input type="file" id="file" accept="application/json,.json" hidden>
+<input type="file" id="rfile" accept="image/*" multiple hidden>
 
 <script src="config.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
@@ -141,11 +145,12 @@ function lsDel(k){try{localStorage.removeItem(k)}catch(e){}}
 const jparse=s=>{try{return JSON.parse(s)}catch(e){return null}};
 
 /* ---------- Κατάσταση ---------- */
-function blank(){return{items:[],tx:[],cats:[...DEFAULT_CATS]}}
+function blank(){return{items:[],tx:[],cats:[...DEFAULT_CATS],aliases:{}}}
 const CFG=window.SG_CONFIG||{};
 const configured=!!(CFG.SUPABASE_URL&&/^https:\/\/.+/.test(CFG.SUPABASE_URL)&&CFG.SUPABASE_ANON_KEY&&String(CFG.SUPABASE_ANON_KEY).length>40);
 const APP_URL=location.origin+location.pathname;
 let S=blank(),user=null,queue=[],sb=null,chan=null;
+let credits={balance:null,unlimited:false},R=null;
 let flushing=false,pulling=false,pullPending=false,pullTimer=null,retryTimer=null,syncErr=false,localVer=0;
 const mine=new Set();
 const ui={screen:'loading',tab:'stock',hf:'all',q:'',f:'all',cat:'',authMode:'login',authEmail:''};
@@ -158,9 +163,11 @@ function persist(){
 }
 const save=persist;
 function loadLocal(uid){
+  credits={balance:null,unlimited:false};
   const d=jparse(lsGet('sg_data_'+uid));
   S=(d&&Array.isArray(d.items)&&Array.isArray(d.tx))?d:blank();
   if(!Array.isArray(S.cats)||!S.cats.length)S.cats=[...DEFAULT_CATS];
+  if(!S.aliases||typeof S.aliases!=='object')S.aliases={};
   const q=jparse(lsGet('sg_queue_'+uid));
   queue=Array.isArray(q)?q:[];
 }
@@ -182,6 +189,7 @@ const pushTx=t=>enqueue('tx','upsert',txRow(t),t.id);
 const delItemRemote=id=>{S.tx.filter(t=>t.itemId===id).forEach(t=>markMine(t.id));enqueue('items','delete',{id},id)};
 const delTxRemote=id=>enqueue('tx','delete',{id},id);
 const pushCats=()=>enqueue('settings','upsert',{user_id:user.id,cats:S.cats},user.id);
+const pushAliases=()=>enqueue('settings','upsert',{user_id:user.id,aliases:S.aliases},user.id);
 
 /* ---------- Συγχρονισμός ---------- */
 function permanent(r){const s=r.status;return s>=400&&s<500&&![401,408,429].includes(s)}
@@ -226,12 +234,14 @@ async function pull(){
   if(queue.length||flushing){pullPending=true;return}
   pulling=true;const ver=localVer;
   try{
-    const [it,tx,st]=await Promise.all([fetchAll('items'),fetchAll('tx'),sb.from('settings').select('*').maybeSingle()]);
+    const [it,tx,st,cr]=await Promise.all([fetchAll('items'),fetchAll('tx'),sb.from('settings').select('*').maybeSingle(),sb.from('credits').select('*').maybeSingle().then(r=>r,()=>({data:null}))]);
     if(st.error)throw st.error;
     if(queue.length||flushing||ver!==localVer){pullPending=true;return}
     S.items=it.map(fromItem);
     S.tx=tx.map(fromTx);
     if(st.data&&Array.isArray(st.data.cats)&&st.data.cats.length)S.cats=st.data.cats;
+    if(st.data&&st.data.aliases&&typeof st.data.aliases==='object')S.aliases=st.data.aliases;
+    if(cr&&!cr.error&&cr.data)credits={balance:cr.data.balance,unlimited:!!cr.data.unlimited};
     persist();syncErr=false;refresh();
     if(!st.data)pushCats();
   }catch(e){syncErr=true}
@@ -500,8 +510,8 @@ function row(i){
 }
 function viewShop(){
   const a=shopItems();
-  if(!a.length)return '<div class="empty">Όλα καλά! Δεν λείπει τίποτα 🎉<br><small>Ορίστε «ελάχιστο όριο» στα είδη για να εμφανίζονται εδώ όταν λιγοστεύουν.</small></div>';
-  return `<button class="btn primary" data-act="sharelist" style="margin:0 0 10px">Κοινοποίηση / αντιγραφή λίστας</button>`+
+  if(!a.length)return receiptBar()+'<div class="empty">Όλα καλά! Δεν λείπει τίποτα 🎉<br><small>Ορίστε «ελάχιστο όριο» στα είδη για να εμφανίζονται εδώ όταν λιγοστεύουν.</small></div>';
+  return receiptBar()+`<button class="btn" data-act="sharelist" style="margin:0 0 10px">Κοινοποίηση / αντιγραφή λίστας</button>`+
     a.sort((x,y)=>x.cat.localeCompare(y.cat,'el')||x.name.localeCompare(y.name,'el')).map(i=>
     `<div class="row"><div class="info"><b>${esc(i.name)}</b><small>Απόθεμα ${fmt(i.st)} / ελάχ. ${fmt(i.min)} ${esc(i.unit)} · πρόταση: ${fmt(i.need)}</small></div><button class="rb add" style="width:auto;padding:0 12px;font-size:14px" data-act="buy" data-id="${i.id}">Αγόρασα</button></div>`).join('');
 }
@@ -681,6 +691,139 @@ function quickTx(id,type){
   scanSheet(id);
 }
 
+/* ---------- Απόδειξη ---------- */
+const normAlias=s=>String(s||'').toLowerCase().replace(/ς/g,'σ').normalize('NFD').replace(/[̀-ͯ]/g,'').replace(/[^a-z0-9α-ω]+/g,' ').trim();
+function creditsLabel(){
+  if(credits.unlimited)return 'απεριόριστες σαρώσεις';
+  if(credits.balance===null)return '';
+  return credits.balance+' '+(credits.balance===1?'σάρωση':'σαρώσεις');
+}
+function receiptBar(){
+  const c=creditsLabel();
+  return `<button class="btn primary" data-act="receipt" style="margin:0 0 4px">🧾 Σάρωση απόδειξης</button><p class="meta" style="margin:0 2px 12px">${c?'Απομένουν: '+esc(c)+' · ':''}Μακριά απόδειξη; Διάλεξε 2-3 φωτογραφίες από τη συλλογή.</p>`;
+}
+function shrinkImage(file){
+  return new Promise((res,rej)=>{
+    const url=URL.createObjectURL(file),img=new Image();
+    img.onload=()=>{
+      try{
+        const sc=Math.min(1,2000/Math.max(img.naturalWidth,img.naturalHeight));
+        const w=Math.max(1,Math.round(img.naturalWidth*sc)),h=Math.max(1,Math.round(img.naturalHeight*sc));
+        const c=document.createElement('canvas');c.width=w;c.height=h;
+        const x=c.getContext('2d');x.fillStyle='#fff';x.fillRect(0,0,w,h);x.drawImage(img,0,0,w,h);
+        const d=c.toDataURL('image/jpeg',0.82);URL.revokeObjectURL(url);res(d.split(',')[1]);
+      }catch(e){rej(e)}
+    };
+    img.onerror=()=>{URL.revokeObjectURL(url);rej(new Error('Δεν διαβάστηκε η φωτογραφία'))};
+    img.src=url;
+  });
+}
+async function receiptFromFiles(files){
+  if(!sb||!user||user.offline||!navigator.onLine)return toast('Η σάρωση απόδειξης χρειάζεται σύνδεση στο internet');
+  const list=[...files].slice(0,4);
+  sheet(`<h3>Διαβάζω την απόδειξη…</h3><p class="meta">Μπορεί να πάρει έως και 30 δευτερόλεπτα. Μην κλείσεις την εφαρμογή.</p>`);
+  try{
+    const images=[];for(const f of list)images.push(await shrinkImage(f));
+    const r0=await sb.auth.getSession();const session=r0&&r0.data&&r0.data.session;
+    if(!session)throw new Error('Έληξε η σύνδεση. Κάνε αποσύνδεση και σύνδεση ξανά.');
+    const ctrl=new AbortController();const tm=setTimeout(()=>ctrl.abort(),90000);
+    let r;
+    try{
+      r=await fetch(CFG.SUPABASE_URL.replace(/\/$/,'')+'/functions/v1/scan-receipt',{method:'POST',signal:ctrl.signal,
+        headers:{'Authorization':'Bearer '+session.access_token,'apikey':CFG.SUPABASE_ANON_KEY,'Content-Type':'application/json'},
+        body:JSON.stringify({images,mediaType:'image/jpeg',items:S.items.map(i=>({name:i.name}))})});
+    }finally{clearTimeout(tm)}
+    const j=await r.json().catch(()=>({}));
+    if(r.status===402){
+      credits={balance:0,unlimited:false};
+      sheet(`<h3>Τελείωσαν οι σαρώσεις</h3><p class="meta">Δεν έχεις άλλες διαθέσιμες σαρώσεις απόδειξης. Μπορείς να καταχωρίσεις αγορές με barcode ή με το χέρι.</p><div class="actions"><button data-act="close">Κλείσιμο</button></div>`);
+      return;
+    }
+    if(r.status===404)throw new Error('Η υπηρεσία scan-receipt δεν έχει στηθεί ακόμα στο Supabase.');
+    if(!r.ok)throw new Error(j.detail||j.error||('HTTP '+r.status));
+    if(typeof j.credits_left==='number')credits=j.credits_left===-1?{balance:credits.balance,unlimited:true}:{balance:j.credits_left,unlimited:false};
+    buildReview(j);
+  }catch(e){
+    const m=(e&&e.name==='AbortError')?'Η ανάγνωση άργησε πολύ. Δοκίμασε ξανά.':String((e&&e.message)||e);
+    sheet(`<h3>Δεν διαβάστηκε η απόδειξη</h3><p class="meta">${esc(m)}</p><p class="meta">Αν είχε γίνει χρέωση σάρωσης, επιστρέφεται όταν αποτυγχάνει η ανάγνωση.</p><div class="actions"><button data-act="close">Κλείσιμο</button><button class="primary" data-act="receipt">Ξανά</button></div>`);
+  }
+}
+function buildReview(j){
+  const byName=new Map(S.items.map(i=>[i.name.toLowerCase(),i]));
+  let dateISO=new Date().toISOString();
+  if(/^\d{4}-\d{2}-\d{2}$/.test(j.date||'')){
+    const d=new Date(j.date+'T12:00:00'),now=Date.now();
+    if(!isNaN(d.getTime())&&d.getTime()<=now&&now-d.getTime()<60*864e5)dateISO=d.toISOString();
+  }
+  const lines=(j.lines||[]).filter(l=>l&&l.is_product!==false&&String(l.raw||l.name||'').trim()).map(l=>{
+    let id='';
+    const al=S.aliases[normAlias(l.raw)];
+    if(al&&item(al))id=al;
+    else if(l.match&&byName.get(String(l.match).toLowerCase()))id=byName.get(String(l.match).toLowerCase()).id;
+    return{raw:String(l.raw||l.name),name:String(l.name||l.raw),qty:Number(l.qty)>0?Number(l.qty):1,unit:l.unit||'τεμ.',price:Number(l.price)||0,itemId:id,exp:''};
+  });
+  R={store:j.store||'',dateISO,lines};
+  if(!lines.length){
+    sheet(`<h3>Δεν βρέθηκαν προϊόντα</h3><p class="meta">Η φωτογραφία δεν φάνηκε καθαρά. Δοκίμασε ξανά με καλύτερο φως, με την απόδειξη ίσια και ολόκληρη στο κάδρο.</p><div class="actions"><button data-act="close">Κλείσιμο</button><button class="primary" data-act="receipt">Ξανά</button></div>`);
+    render();return;
+  }
+  render();reviewSheet();
+}
+function reviewSheet(){
+  const items=[...S.items].sort((a,b)=>a.name.localeCompare(b.name,'el'));
+  const dt=R.dateISO?fmtDate(localISO(new Date(R.dateISO))):'';
+  const rows=R.lines.map((l,i)=>{
+    const sel=l.itemId||'';
+    const opts=`<option value="">— Αγνόηση —</option><option value="__new"${sel==='__new'?' selected':''}>+ Νέο είδος: ${esc(l.name)}</option>`+items.map(it=>`<option value="${it.id}"${sel===it.id?' selected':''}>${esc(it.name)}</option>`).join('');
+    return `<div class="rl${sel?'':' unm'}" id="rl${i}"><div class="rraw">${esc(l.raw)}${l.price?' · '+fmt(l.price)+'€':''}</div>
+    <select data-ri="${i}" data-f="item">${opts}</select>
+    <div class="two"><label>Ποσότητα (${esc(l.unit)})<input data-ri="${i}" data-f="qty" inputmode="decimal" value="${fmt(l.qty)}"></label><label>Λήξη (προαιρετικά)<input data-ri="${i}" data-f="exp" type="date"></label></div></div>`;
+  }).join('');
+  const cl=creditsLabel();
+  sheet(`<h3>Αγορές από απόδειξη</h3><p class="meta">${esc(R.store)}${R.store&&dt?' · ':''}${dt}${cl?' · απομένουν '+esc(cl):''}</p>
+  <p class="meta">Έλεγξε κάθε γραμμή. Όσες δεν αναγνωρίστηκαν (πορτοκαλί) αγνοούνται μέχρι να διαλέξεις είδος.</p>${rows}
+  <div class="actions" style="position:sticky;bottom:-18px;background:var(--card);padding:8px 0 4px"><button data-act="close">Άκυρο</button><button id="rconfirm" class="primary" data-act="rconfirm"></button></div>`);
+  updateRCount();
+}
+function updateRCount(){
+  const b=$('#rconfirm');if(!b||!R)return;
+  const n=R.lines.filter(l=>l.itemId).length;
+  b.textContent='Καταχώρηση ('+n+')';b.disabled=n===0;
+}
+function reviewChange(el){
+  if(!R||el.dataset.f!=='item')return;
+  const i=+el.dataset.ri;R.lines[i].itemId=el.value;
+  const row=$('#rl'+i);if(row)row.classList.toggle('unm',!el.value);
+  updateRCount();
+}
+function confirmReceipt(){
+  if(!R)return;
+  R.lines.forEach((l,i)=>{
+    const q=document.querySelector(`[data-ri="${i}"][data-f="qty"]`),e=document.querySelector(`[data-ri="${i}"][data-f="exp"]`);
+    if(q)l.qty=parseNum(q.value);if(e)l.exp=e.value||'';
+  });
+  const made=[];let skipped=0;
+  R.lines.forEach(l=>{
+    if(!l.itemId)return;
+    if(!(l.qty>0)){skipped++;return}
+    let id=l.itemId;
+    if(id==='__new'){
+      const ex=S.items.find(x=>x.name.toLowerCase()===l.name.toLowerCase());
+      if(ex)id=ex.id;
+      else{const it={id:newId(),name:l.name,cat:'Άλλο',unit:l.unit||'τεμ.',min:0,barcode:''};S.items.push(it);pushItem(it);id=it.id}
+      l.itemId=id;
+    }
+    const t={id:newId(),itemId:id,type:'in',qty:l.qty,date:R.dateISO};
+    if(l.exp)t.expiry=l.exp;
+    S.tx.push(t);pushTx(t);made.push(t);
+    S.aliases[normAlias(l.raw)]=id;
+  });
+  if(!made.length)return toast(skipped?'Βάλε ποσότητα μεγαλύτερη από 0':'Δεν έχεις διαλέξει είδος σε καμία γραμμή');
+  pushAliases();persist();R=null;closeSheet();render();
+  const ids=new Set(made.map(t=>t.id));
+  toast(`Καταχωρήθηκαν ${made.length} αγορές`,()=>{S.tx=S.tx.filter(x=>!ids.has(x.id));ids.forEach(delTxRemote);render()});
+}
+
 /* ---------- Ενέργειες ---------- */
 function addTx(itemId,type,qty,expiry){
   const t={id:newId(),itemId,type,qty,date:new Date().toISOString()};
@@ -793,6 +936,8 @@ document.addEventListener('click',e=>{
       if(!codesOf(it).some(x=>normBar(x)===normBar(v))){it.barcode=codesOf(it).concat(v).join(' ');pushItem(it)}
       render();scanSheet(it.id);toast('Το barcode συνδέθηκε με το «'+it.name+'»');break}
     case 'newwithbar':itemSheet(null,{barcode:v,name:scanName});break;
+    case 'receipt':if(!sb||!user||user.offline||!navigator.onLine)toast('Η σάρωση απόδειξης χρειάζεται σύνδεση στο internet');else $('#rfile').click();break;
+    case 'rconfirm':confirmReceipt();break;
     case 'authgo':authGo();break;
     case 'authmode':ui.authEmail=($('#a_email')||{}).value||ui.authEmail;ui.authMode=ui.authMode==='login'?'register':'login';render();break;
     case 'forgot':forgot();break;
@@ -811,6 +956,8 @@ document.addEventListener('keydown',e=>{
 });
 document.addEventListener('input',e=>{if(e.target.id==='q'){ui.q=e.target.value;$('#list').innerHTML=listStock()}});
 document.addEventListener('change',e=>{
+  if(e.target.id==='rfile'){const fs=[...e.target.files];e.target.value='';if(fs.length)receiptFromFiles(fs);return}
+  if(e.target.dataset&&e.target.dataset.ri!==undefined){reviewChange(e.target);return}
   if(e.target.id==='catsel'){ui.cat=e.target.value;$('#list').innerHTML=listStock()}
   if(e.target.id==='f_cat'){const n=$('#f_newcat');n.style.display=e.target.value==='__new'?'block':'none';if(e.target.value==='__new')n.focus()}
   if(e.target.id==='file'){
