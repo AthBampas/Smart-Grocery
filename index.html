@@ -48,7 +48,13 @@ nav{position:fixed;bottom:0;left:0;right:0;display:flex;background:var(--card);b
 nav button{flex:1;background:none;border:0;padding:8px 0 6px;color:var(--mut);font:inherit;font-size:11px;display:flex;flex-direction:column;align-items:center;gap:2px;position:relative}
 nav .i{font-size:20px}nav button.on{color:var(--pri);font-weight:700}
 .dot{position:absolute;top:2px;left:calc(50% + 8px);background:var(--red);color:#fff;font-size:10px;font-style:normal;border-radius:999px;padding:0 6px;min-width:16px}
-#fab{position:fixed;right:16px;bottom:calc(76px + env(safe-area-inset-bottom));width:56px;height:56px;border-radius:50%;border:0;background:var(--pri);color:var(--pri-t);font-size:30px;box-shadow:0 4px 14px rgba(0,0,0,.3);display:flex;align-items:center;justify-content:center;z-index:6}
+#fab{position:fixed;right:20px;bottom:calc(150px + env(safe-area-inset-bottom));width:48px;height:48px;border-radius:50%;border:0;background:var(--pri);color:var(--pri-t);font-size:30px;box-shadow:0 4px 14px rgba(0,0,0,.3);display:flex;align-items:center;justify-content:center;z-index:6}
+#fab2{position:fixed;right:14px;bottom:calc(76px + env(safe-area-inset-bottom));width:60px;height:60px;border-radius:50%;border:0;background:var(--pri);color:var(--pri-t);font-size:28px;box-shadow:0 4px 14px rgba(0,0,0,.3);display:flex;align-items:center;justify-content:center;z-index:6}
+#scanwrap{position:fixed;inset:0;background:#000;color:#fff;z-index:30;display:none;flex-direction:column}
+#scanbar{display:flex;justify-content:space-between;align-items:center;padding:calc(12px + env(safe-area-inset-top)) 16px 12px;font-size:18px}
+#scanbar button{background:none;border:0;color:#fff;font-size:26px;padding:4px 10px}
+#reader{width:100%;flex:1;min-height:0;overflow:hidden}
+#scanhint{text-align:center;margin:0;padding:12px 16px calc(16px + env(safe-area-inset-bottom));font-size:14px;opacity:.85}
 #sheetwrap{position:fixed;inset:0;background:rgba(0,0,0,.45);display:none;align-items:center;justify-content:center;padding:12px;z-index:10}
 #sheetwrap.open{display:flex}
 .card{background:var(--card);width:100%;max-width:640px;border-radius:18px;padding:18px 16px;max-height:85vh;max-height:85dvh;overflow:auto;box-shadow:0 10px 40px rgba(0,0,0,.35)}
@@ -78,6 +84,12 @@ nav .i{font-size:20px}nav button.on{color:var(--pri);font-weight:700}
 <header><span>🛒 Smart Grocery</span><span id="sync"></span></header>
 <main id="main"></main>
 <button id="fab" data-act="new" aria-label="Νέο είδος" style="display:none">+</button>
+<button id="fab2" data-act="scan" aria-label="Σάρωση barcode" style="display:none">📷</button>
+<div id="scanwrap">
+  <div id="scanbar"><b id="scantitle">Σάρωση barcode</b><button data-act="scanclose" aria-label="Κλείσιμο">✕</button></div>
+  <div id="reader"></div>
+  <p id="scanhint">Στόχευσε το barcode μέσα στο πλαίσιο</p>
+</div>
 <nav style="display:none">
   <button data-act="tab" data-v="stock"><span class="i">📦</span>Απόθεμα</button>
   <button data-act="tab" data-v="items"><span class="i">🗂️</span>Είδη</button>
@@ -431,6 +443,7 @@ function render(top){
   document.querySelectorAll('nav button').forEach(b=>b.classList.toggle('on',b.dataset.v===ui.tab));
   $('nav').style.display=app?'flex':'none';
   $('#fab').style.display=(app&&(ui.tab==='stock'||ui.tab==='items'))?'flex':'none';
+  $('#fab2').style.display=app?'flex':'none';
   if(app)updateDot();
   updateSync();
   if(top)window.scrollTo(0,0);
@@ -523,8 +536,8 @@ function viewSet(){
 }
 
 /* ---------- Φύλλα (modals) ---------- */
-function sheet(html){$('#sheet').innerHTML='<div class="card">'+html+'</div>';$('#sheetwrap').classList.add('open')}
-function closeSheet(){$('#sheetwrap').classList.remove('open');$('#sheet').innerHTML=''}
+function sheet(html){scanSheetId=null;$('#sheet').innerHTML='<div class="card">'+html+'</div>';$('#sheetwrap').classList.add('open')}
+function closeSheet(){scanSheetId=null;$('#sheetwrap').classList.remove('open');$('#sheet').innerHTML=''}
 function newPassSheet(){
   sheet(`<h3>Νέος κωδικός</h3>
   <label>Νέος κωδικός (τουλάχιστον 8 χαρακτήρες)<input id="np" type="password" autocomplete="new-password"></label>
@@ -549,7 +562,7 @@ function detailSheet(id){
   <div class="actions" style="margin-top:8px"><button data-act="edit" data-id="${id}">Επεξεργασία</button><button data-act="close">Κλείσιμο</button></div>
   ${hist.length?'<h4>Τελευταίες κινήσεις</h4>'+hist.map(t=>`<div class="hl">${fmtDT(t.date)} · <b class="q ${t.type}">${t.type==='in'?'+':'−'}${fmt(t.qty)}</b>${t.expiry?' · λήξη '+fmtDate(t.expiry):''}</div>`).join(''):''}`);
 }
-function itemSheet(id){
+function itemSheet(id,preBar){
   const it=id?item(id):{name:'',cat:ui.cat||S.cats[0],unit:'τεμ.',min:0,barcode:''};
   const catOpts=S.cats.map(c=>`<option ${it.cat===c?'selected':''}>${esc(c)}</option>`).join('')+'<option value="__new">+ Νέα κατηγορία…</option>';
   const unitOpts=UNITS.map(u=>`<option ${it.unit===u?'selected':''}>${esc(u)}</option>`).join('');
@@ -558,10 +571,82 @@ function itemSheet(id){
   <label>Κατηγορία<select id="f_cat">${catOpts}</select></label>
   <input id="f_newcat" placeholder="Όνομα νέας κατηγορίας" style="display:none;margin-top:8px">
   <div class="two"><label>Μονάδα<select id="f_unit">${unitOpts}</select></label><label>Ελάχιστο όριο<input id="f_min" inputmode="decimal" value="${it.min||''}" placeholder="0"></label></div>
-  <label>Barcode (προαιρετικά)<input id="f_bar" inputmode="numeric" value="${esc(it.barcode||'')}"></label>
+  <label style="margin-bottom:0">Barcode (προαιρετικά)</label>
+  <div style="display:flex;gap:8px;margin-top:4px"><input id="f_bar" value="${esc(it.barcode||preBar||'')}"><button class="btn" style="width:auto;margin:0;padding:0 16px" data-act="scanfield" aria-label="Σάρωση barcode">📷</button></div>
   ${id?'':'<div class="two"><label>Αρχική ποσότητα<input id="f_qty" inputmode="decimal" placeholder="0"></label><label>Λήξη<input id="f_exp" type="date"></label></div>'}
   <div class="actions">${id?`<button class="danger" data-act="delitem" data-id="${id}">Διαγραφή</button>`:''}<button data-act="close">Άκυρο</button><button class="primary" data-act="saveitem" data-id="${id||''}">Αποθήκευση</button></div>`);
   if(!id)setTimeout(()=>{const f=$('#f_name');if(f)f.focus()},50);
+}
+
+/* ---------- Σάρωση barcode ---------- */
+const QR_URL='https://cdnjs.cloudflare.com/ajax/libs/html5-qrcode/2.3.8/html5-qrcode.min.js';
+let scanner=null,scanSheetId=null;
+const normBar=s=>String(s||'').trim().replace(/\s+/g,'').replace(/^0+(?=\d)/,'');
+const findByBarcode=c=>{const n=normBar(c);return n?S.items.find(i=>i.barcode&&normBar(i.barcode)===n):null};
+function loadScanner(){
+  if(window.Html5Qrcode)return Promise.resolve();
+  return new Promise((res,rej)=>{const s=document.createElement('script');s.src=QR_URL;s.onload=res;s.onerror=()=>rej(new Error('load'));document.head.appendChild(s)});
+}
+async function openScanner(handler,title,keepSheet){
+  if(!navigator.mediaDevices||!navigator.mediaDevices.getUserMedia)return toast('Η κάμερα δεν υποστηρίζεται σε αυτό το πρόγραμμα περιήγησης');
+  if(scanner)return;
+  if(!keepSheet)closeSheet();
+  $('#scantitle').textContent=title||'Σάρωση barcode';
+  $('#scanwrap').style.display='flex';
+  try{await loadScanner()}catch(e){$('#scanwrap').style.display='none';return toast('Δεν φορτώθηκε ο σαρωτής. Έλεγξε το internet.')}
+  const F=window.Html5QrcodeSupportedFormats||{};
+  const formats=['EAN_13','EAN_8','UPC_A','UPC_E','CODE_128','CODE_39','ITF'].map(k=>F[k]).filter(x=>x!==undefined);
+  let done=false;
+  try{
+    scanner=new Html5Qrcode('reader',{formatsToSupport:formats,verbose:false,useBarCodeDetectorIfSupported:true,experimentalFeatures:{useBarCodeDetectorIfSupported:true}});
+    await scanner.start({facingMode:'environment'},
+      {fps:10,qrbox:(w,h)=>({width:Math.max(150,Math.min(w-40,340)),height:Math.max(100,Math.min(Math.round(h*0.35),200))})},
+      text=>{
+        if(done)return;done=true;
+        if(navigator.vibrate)try{navigator.vibrate(60)}catch(e){}
+        stopScanner().then(()=>handler(String(text).trim()));
+      },()=>{});
+  }catch(e){
+    await stopScanner();
+    toast(/permission|denied|notallowed/i.test(String(e))?'Δώσε άδεια χρήσης κάμερας στο πρόγραμμα περιήγησης':'Δεν ήταν δυνατή η εκκίνηση της κάμερας');
+  }
+}
+async function stopScanner(){
+  const s=scanner;scanner=null;
+  try{if(s){if(s.isScanning)await s.stop();s.clear()}}catch(e){}
+  $('#scanwrap').style.display='none';
+}
+function onScanned(code){
+  const it=findByBarcode(code);
+  if(it)scanSheet(it.id);else unknownSheet(code);
+}
+function scanSheet(id){
+  const it=item(id);if(!it)return;
+  const i=info(it);
+  const cnt=COUNT_UNITS.includes(i.unit);
+  sheet(`<h3>${esc(i.name)}</h3>
+  <div class="big">${fmt(i.st)} <span>${esc(i.unit)}</span></div>
+  <p class="meta">${esc(i.cat)}${i.min?' · Ελάχιστο: '+fmt(i.min):''}</p>
+  ${batchLines(i)}
+  <div class="actions"><button data-act="scanout" data-id="${id}" style="font-size:18px;padding:16px">${cnt?'− 1 Κατανάλωση':'− Κατανάλωση'}</button><button class="primary" data-act="scanin" data-id="${id}" style="font-size:18px;padding:16px">${cnt?'+ 1 Αγορά':'+ Αγορά'}</button></div>
+  <div class="actions"><button data-act="scannext">📷 Σάρωση επόμενου</button><button data-act="close">Κλείσιμο</button></div>`);
+  scanSheetId=id;
+}
+function unknownSheet(code){
+  const opts=[...S.items].sort((a,b)=>a.name.localeCompare(b.name,'el')).map(i=>`<option value="${i.id}">${esc(i.name)}</option>`).join('');
+  sheet(`<h3>Άγνωστο barcode</h3>
+  <p class="meta">Το <b>${esc(code)}</b> δεν είναι συνδεδεμένο με κάποιο είδος.</p>
+  ${S.items.length?`<label>Σύνδεση με υπάρχον είδος<select id="u_item"><option value="">Διάλεξε είδος…</option>${opts}</select></label>
+  <button class="btn" data-act="linkbar" data-v="${esc(code)}">Σύνδεση barcode με το είδος</button>`:''}
+  <button class="btn primary" data-act="newwithbar" data-v="${esc(code)}">Δημιουργία νέου είδους</button>
+  <div class="actions"><button data-act="scannext">📷 Σάρωση επόμενου</button><button data-act="close">Άκυρο</button></div>`);
+}
+function quickTx(id,type){
+  const it=item(id);if(!it)return;
+  if(!COUNT_UNITS.includes(it.unit)){qtySheet(id,type,1);return}
+  if(type==='out'&&stockOf(id)<=0)return toast('Δεν υπάρχει απόθεμα');
+  addTx(id,type,1);
+  scanSheet(id);
 }
 
 /* ---------- Ενέργειες ---------- */
@@ -570,7 +655,7 @@ function addTx(itemId,type,qty,expiry){
   if(expiry)t.expiry=expiry;
   S.tx.push(t);pushTx(t);render();
   const it=item(itemId);
-  toast(`${type==='in'?'+':'−'}${fmt(qty)} ${it.unit} · ${it.name}`,()=>{S.tx=S.tx.filter(x=>x.id!==t.id);delTxRemote(t.id);render()});
+  toast(`${type==='in'?'+':'−'}${fmt(qty)} ${it.unit} · ${it.name}`,()=>{S.tx=S.tx.filter(x=>x.id!==t.id);delTxRemote(t.id);render();if(scanSheetId===itemId)scanSheet(itemId)});
 }
 let tt;
 function toast(msg,undo){
@@ -589,6 +674,8 @@ function saveItem(id){
   if(cat==='__new'){cat=$('#f_newcat').value.trim();if(!cat)return toast('Γράψε όνομα κατηγορίας');if(!S.cats.includes(cat)){S.cats.push(cat);catAdded=true}}
   if(S.items.some(x=>x.id!==id&&x.name.toLowerCase()===name.toLowerCase()))return toast('Υπάρχει ήδη είδος με αυτό το όνομα');
   const unit=$('#f_unit').value,min=parseNum($('#f_min').value)||0,barcode=$('#f_bar').value.trim();
+  const dupBar=barcode&&S.items.find(x=>x.id!==id&&x.barcode&&normBar(x.barcode)===normBar(barcode));
+  if(dupBar)return toast('Το barcode ανήκει ήδη στο «'+dupBar.name+'»');
   if(catAdded)pushCats();
   if(id){const it=item(id);Object.assign(it,{name,cat,unit,min,barcode});pushItem(it);closeSheet();render();toast('Αποθηκεύτηκε');return}
   const it={id:newId(),name,cat,unit,min,barcode};
@@ -662,6 +749,15 @@ document.addEventListener('click',e=>{
       render();toast(n?`Προστέθηκαν ${n} είδη`:'Όλα τα βασικά είδη υπάρχουν ήδη');break}
     case 'wipe':if(confirm('ΠΡΟΣΟΧΗ: θα διαγραφούν όλα τα είδη και οι κινήσεις από όλες τις συσκευές. Να συνεχίσω;')){
       S.items.forEach(i=>delItemRemote(i.id));S.items=[];S.tx=[];persist();render();toast('Τα δεδομένα διαγράφηκαν')}break;
+    case 'scan':openScanner(onScanned,'Σάρωση προϊόντος');break;
+    case 'scannext':closeSheet();openScanner(onScanned,'Σάρωση προϊόντος');break;
+    case 'scanclose':stopScanner();break;
+    case 'scanfield':openScanner(code=>{const f=$('#f_bar');if(f)f.value=code;toast('Barcode: '+code)},'Σάρωση barcode',true);break;
+    case 'scanout':quickTx(id,'out');break;
+    case 'scanin':quickTx(id,'in');break;
+    case 'linkbar':{const sel=$('#u_item');if(!sel||!sel.value)return toast('Διάλεξε είδος');
+      const it=item(sel.value);it.barcode=v;pushItem(it);render();scanSheet(it.id);toast('Το barcode συνδέθηκε με το «'+it.name+'»');break}
+    case 'newwithbar':itemSheet(null,v);break;
     case 'authgo':authGo();break;
     case 'authmode':ui.authEmail=($('#a_email')||{}).value||ui.authEmail;ui.authMode=ui.authMode==='login'?'register':'login';render();break;
     case 'forgot':forgot();break;
