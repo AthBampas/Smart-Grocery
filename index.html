@@ -150,10 +150,10 @@ const CFG=window.SG_CONFIG||{};
 const configured=!!(CFG.SUPABASE_URL&&/^https:\/\/.+/.test(CFG.SUPABASE_URL)&&CFG.SUPABASE_ANON_KEY&&String(CFG.SUPABASE_ANON_KEY).length>40);
 const APP_URL=location.origin+location.pathname;
 let S=blank(),user=null,queue=[],sb=null,chan=null;
-let credits={balance:null,unlimited:false},R=null;
+let credits={balance:null,unlimited:false},R=null,hh=null;
 let flushing=false,pulling=false,pullPending=false,pullTimer=null,retryTimer=null,syncErr=false,localVer=0;
 const mine=new Set();
-const ui={screen:'loading',tab:'stock',hf:'all',q:'',f:'all',cat:'',authMode:'login',authEmail:''};
+const ui={screen:'loading',tab:'stock',hf:'all',hw:'all',q:'',f:'all',cat:'',authMode:'login',authEmail:''};
 const item=id=>S.items.find(i=>i.id===id);
 
 function persist(){
@@ -164,6 +164,7 @@ function persist(){
 const save=persist;
 function loadLocal(uid){
   credits={balance:null,unlimited:false};
+  const h0=jparse(lsGet('sg_hh_'+uid));hh=(h0&&h0.id)?h0:null;
   const d=jparse(lsGet('sg_data_'+uid));
   S=(d&&Array.isArray(d.items)&&Array.isArray(d.tx))?d:blank();
   if(!Array.isArray(S.cats)||!S.cats.length)S.cats=[...DEFAULT_CATS];
@@ -173,10 +174,11 @@ function loadLocal(uid){
 }
 
 /* ---------- Αντιστοίχιση με τη βάση ---------- */
-const itemRow=i=>({id:i.id,user_id:user.id,name:i.name,cat:i.cat,unit:i.unit,min_qty:i.min||0,barcode:i.barcode||''});
-const txRow=t=>({id:t.id,user_id:user.id,item_id:t.itemId,type:t.type,qty:t.qty,expiry:t.expiry||null,created_at:t.date});
+/* Το user_id (ποιος το έκανε) και το household_id συμπληρώνονται από τη βάση */
+const itemRow=i=>({id:i.id,name:i.name,cat:i.cat,unit:i.unit,min_qty:i.min||0,barcode:i.barcode||''});
+const txRow=t=>({id:t.id,item_id:t.itemId,type:t.type,qty:t.qty,expiry:t.expiry||null,created_at:t.date});
 const fromItem=r=>({id:r.id,name:r.name,cat:r.cat,unit:r.unit,min:Number(r.min_qty)||0,barcode:r.barcode||''});
-function fromTx(r){const t={id:r.id,itemId:r.item_id,type:r.type,qty:Number(r.qty),date:new Date(r.created_at).toISOString()};if(r.expiry)t.expiry=r.expiry;return t}
+function fromTx(r){const t={id:r.id,itemId:r.item_id,type:r.type,qty:Number(r.qty),date:new Date(r.created_at).toISOString(),by:r.user_id};if(r.expiry)t.expiry=r.expiry;return t}
 
 function markMine(id){mine.add(id);setTimeout(()=>mine.delete(id),20000)}
 function enqueue(table,op,payload,key){
@@ -188,8 +190,8 @@ const pushItem=i=>enqueue('items','upsert',itemRow(i),i.id);
 const pushTx=t=>enqueue('tx','upsert',txRow(t),t.id);
 const delItemRemote=id=>{S.tx.filter(t=>t.itemId===id).forEach(t=>markMine(t.id));enqueue('items','delete',{id},id)};
 const delTxRemote=id=>enqueue('tx','delete',{id},id);
-const pushCats=()=>enqueue('settings','upsert',{user_id:user.id,cats:S.cats},user.id);
-const pushAliases=()=>enqueue('settings','upsert',{user_id:user.id,aliases:S.aliases},user.id);
+const pushCats=()=>{if(hh)enqueue('household_settings','upsert',{household_id:hh.id,cats:S.cats},hh.id)};
+const pushAliases=()=>{if(hh)enqueue('household_settings','upsert',{household_id:hh.id,aliases:S.aliases},hh.id)};
 
 /* ---------- Συγχρονισμός ---------- */
 function permanent(r){const s=r.status;return s>=400&&s<500&&![401,408,429].includes(s)}
@@ -201,7 +203,8 @@ async function flush(){
     while(queue.length){
       const op=queue[0];
       let r;
-      if(op.op==='upsert')r=await sb.from(op.table).upsert(op.payload,op.table==='settings'?{onConflict:'user_id'}:undefined);
+      if(op.table==='settings'){queue.shift();persist();continue}/* παλιός πίνακας, πλέον household_settings */
+      if(op.op==='upsert')r=await sb.from(op.table).upsert(op.payload,op.table==='household_settings'?{onConflict:'household_id'}:undefined);
       else r=await sb.from(op.table).delete().eq('id',op.payload.id);
       if(r.error){
         if(permanent(r)){queue.shift();persist();dropped=true;continue}
@@ -228,13 +231,70 @@ async function fetchAll(table){
   }
   return all;
 }
+/* ---------- Νοικοκυριό (κοινή χρήση με άλλους λογαριασμούς) ---------- */
+function setHH(d){if(d&&d.id){hh=d;if(user)lsPut('sg_hh_'+user.id,JSON.stringify(hh))}}
+async function ensureHousehold(){
+  const r=await sb.rpc('ensure_household');
+  if(r.error)throw r.error;
+  setHH(r.data);
+}
+const hhMembers=()=>(hh&&Array.isArray(hh.members))?hh.members:[];
+const shared=()=>hhMembers().length>1;
+function whoName(uid){
+  const m=hhMembers().find(x=>x.user_id===uid);
+  return m?(m.name||'Χωρίς όνομα'):'Άγνωστος';
+}
+const fmtCode=c=>String(c||'').replace(/(.{5})(?=.)/g,'$1-');
+async function hhCall(fn,args,okMsg){
+  if(!sb||!user||user.offline||!navigator.onLine){toast('Χρειάζεται σύνδεση στο internet');return null}
+  const r=await sb.rpc(fn,args);
+  if(r.error){toast(/invalid_code/.test(r.error.message||'')?'Λάθος κωδικός πρόσκλησης':trErr(r.error));return null}
+  setHH(r.data);if(okMsg)toast(okMsg);
+  return r.data;
+}
+function askName(){
+  if(!user||!hh||ui.screen!=='app'||lsGet('sg_named_'+user.id)||$('#sheetwrap').classList.contains('open'))return;
+  const m=hhMembers().find(x=>x.user_id===user.id);
+  sheet(`<h3>Πώς να σε λέμε;</h3>
+  <p class="meta">Το όνομα θα φαίνεται στο ιστορικό, ώστε να ξέρετε ποιος έκανε κάθε κίνηση.</p>
+  <label>Το όνομά σου<input id="f_myname" maxlength="30" value="${esc(m?m.name:'')}" autocomplete="off"></label>
+  <div class="actions"><button data-act="close">Αργότερα</button><button class="primary" data-act="savename">Αποθήκευση</button></div>`);
+  lsPut('sg_named_'+user.id,'1');
+}
+async function saveName(){
+  const n=($('#f_myname')||{}).value||'';
+  if(!n.trim())return toast('Γράψε ένα όνομα');
+  const d=await hhCall('set_my_name',{p_name:n});
+  if(d){closeSheet();render();toast('Αποθηκεύτηκε')}
+}
+async function afterHouseholdChange(msg){
+  /* άλλο νοικοκυριό = άλλα δεδομένα: φόρτωσέ τα από την αρχή */
+  S=blank();queue=[];persist();render();
+  pullPending=false;await pull();render();
+  if(msg)toast(msg);
+}
+async function joinHousehold(){
+  const code=($('#hh_code')||{}).value||'';
+  if(code.replace(/[^A-Za-z0-9]/g,'').length<8)return toast('Γράψε τον κωδικό πρόσκλησης');
+  if(queue.length){await flush();if(queue.length)return toast('Περίμενε να ολοκληρωθεί ο συγχρονισμός και ξαναδοκίμασε')}
+  if(!confirm('Θα μπεις στο νοικοκυριό που αντιστοιχεί στον κωδικό και θα δεις τα δεδομένα του. Τα δικά σου τωρινά είδη και κινήσεις δεν θα φαίνονται πια εκεί (δεν διαγράφονται). Να συνεχίσω;'))return;
+  const d=await hhCall('join_household',{p_code:code});
+  if(d)await afterHouseholdChange('Μπήκες στο νοικοκυριό');
+}
+async function leaveHousehold(){
+  if(queue.length){await flush();if(queue.length)return toast('Περίμενε να ολοκληρωθεί ο συγχρονισμός και ξαναδοκίμασε')}
+  if(!confirm('Θα βγεις από αυτό το νοικοκυριό και θα ξεκινήσεις με ένα νέο, άδειο. Οι υπόλοιποι κρατούν όλα τα δεδομένα. Να συνεχίσω;'))return;
+  const d=await hhCall('leave_household',{});
+  if(d)await afterHouseholdChange('Βγήκες από το νοικοκυριό');
+}
 async function pull(){
   if(!sb||!user||user.offline||!navigator.onLine)return;
   if(pulling)return;
   if(queue.length||flushing){pullPending=true;return}
   pulling=true;const ver=localVer;
   try{
-    const [it,tx,st,cr]=await Promise.all([fetchAll('items'),fetchAll('tx'),sb.from('settings').select('*').maybeSingle(),sb.from('credits').select('*').maybeSingle().then(r=>r,()=>({data:null}))]);
+    await ensureHousehold();
+    const [it,tx,st,cr]=await Promise.all([fetchAll('items'),fetchAll('tx'),sb.from('household_settings').select('*').maybeSingle(),sb.from('credits').select('*').maybeSingle().then(r=>r,()=>({data:null}))]);
     if(st.error)throw st.error;
     if(queue.length||flushing||ver!==localVer){pullPending=true;return}
     S.items=it.map(fromItem);
@@ -244,6 +304,8 @@ async function pull(){
     if(cr&&!cr.error&&cr.data)credits={balance:cr.data.balance,unlimited:!!cr.data.unlimited};
     persist();syncErr=false;refresh();
     if(!st.data)pushCats();
+    if(ui.tab==='set'&&ui.screen==='app'&&!$('#sheetwrap').classList.contains('open')){const ae=document.activeElement;if(!(ae&&ae.tagName==='INPUT'))render()}
+    askName();
   }catch(e){syncErr=true}
   finally{pulling=false;updateSync()}
 }
@@ -252,8 +314,8 @@ function subscribe(){
   unsubscribe();
   try{
     chan=sb.channel('sg-'+user.id);
-    ['items','tx','settings'].forEach(t=>chan.on('postgres_changes',{event:'*',schema:'public',table:t},p=>{
-      const id=(p.new&&(p.new.id||p.new.user_id))||(p.old&&(p.old.id||p.old.user_id));
+    ['items','tx','household_settings','members'].forEach(t=>chan.on('postgres_changes',{event:'*',schema:'public',table:t},p=>{
+      const id=(p.new&&(p.new.id||p.new.household_id))||(p.old&&(p.old.id||p.old.household_id));
       if(id&&mine.has(id))return;
       schedulePull();
     }));
@@ -328,6 +390,7 @@ async function onSession(session){
   loadLocal(user.id);
   ui.screen='app';render(true);
   subscribe();
+  try{await ensureHousehold()}catch(e){syncErr=true}
   await flush();
   await pull();
   checkLegacy();
@@ -517,14 +580,37 @@ function viewShop(){
 }
 function viewHist(){
   const chips=[['all','Όλα'],['in','Αγορές'],['out','Καταναλώσεις']].map(([k,l])=>`<button class="chip ${ui.hf===k?'on':''}" data-act="hfilter" data-v="${k}">${l}</button>`).join('');
-  const bar=`<div class="chips" style="margin-bottom:2px">${chips}</div>`;
-  const a=[...S.tx].filter(t=>ui.hf==='all'||t.type===ui.hf).sort((x,y)=>Date.parse(y.date)-Date.parse(x.date)).slice(0,200);
+  let bar=`<div class="chips" style="margin-bottom:2px">${chips}</div>`;
+  if(shared()){
+    if(ui.hw!=='all'&&!hhMembers().some(m=>m.user_id===ui.hw))ui.hw='all';
+    const wc=[['all','Όλοι']].concat(hhMembers().map(m=>[m.user_id,(m.name||'Χωρίς όνομα')+(user&&m.user_id===user.id?' (εγώ)':'')])).map(([k,l])=>`<button class="chip ${ui.hw===k?'on':''}" data-act="hwho" data-v="${esc(k)}">${esc(l)}</button>`).join('');
+    bar+=`<div class="chips" style="margin-bottom:2px">${wc}</div>`;
+  }
+  const me=user?user.id:'';
+  const a=[...S.tx].filter(t=>ui.hf==='all'||t.type===ui.hf).filter(t=>!shared()||ui.hw==='all'||(t.by||me)===ui.hw).sort((x,y)=>Date.parse(y.date)-Date.parse(x.date)).slice(0,200);
   if(!a.length)return bar+'<div class="empty">'+(S.tx.length?'Καμία κίνηση σε αυτή την κατηγορία.':'Δεν υπάρχουν κινήσεις ακόμα.')+'</div>';
   let last='';
   return bar+a.map(t=>{const it=item(t.itemId);if(!it)return '';
     const dk=localISO(new Date(t.date));let h='';
     if(dk!==last){last=dk;const n=daysTo(dk);h=`<h4>${n===0?'Σήμερα':n===-1?'Χθες':fmtDate(dk)}</h4>`}
-    return h+`<div class="row"><div class="info"><b>${esc(it.name)}</b><small>${t.type==='in'?'Αγορά':'Κατανάλωση'} · ${new Date(t.date).toLocaleTimeString('el-GR',{hour:'2-digit',minute:'2-digit'})}${t.expiry?' · λήξη '+fmtDate(t.expiry):''}</small></div><div class="q ${t.type}">${t.type==='in'?'+':'−'}${fmt(t.qty)} ${esc(it.unit)}</div><button class="x" data-act="deltx" data-id="${t.id}" aria-label="Διαγραφή κίνησης">✕</button></div>`}).join('');
+    return h+`<div class="row"><div class="info"><b>${esc(it.name)}</b><small>${t.type==='in'?'Αγορά':'Κατανάλωση'} · ${new Date(t.date).toLocaleTimeString('el-GR',{hour:'2-digit',minute:'2-digit'})}${shared()?' · '+esc(whoName(t.by||me)):''}${t.expiry?' · λήξη '+fmtDate(t.expiry):''}</small></div><div class="q ${t.type}">${t.type==='in'?'+':'−'}${fmt(t.qty)} ${esc(it.unit)}</div><button class="x" data-act="deltx" data-id="${t.id}" aria-label="Διαγραφή κίνησης">✕</button></div>`}).join('');
+}
+function hhSection(){
+  if(!hh)return `<h4>Νοικοκυριό</h4><p class="meta">Το νοικοκυριό φορτώνει όταν υπάρχει σύνδεση με το internet.</p>`;
+  const me=user?user.id:'';
+  const mem=hhMembers().map(m=>`<div class="catrow"><span>${esc(m.name||'Χωρίς όνομα')}${m.user_id===me?' <span class="meta">(εγώ)</span>':''}</span></div>`).join('');
+  const mine=hhMembers().find(m=>m.user_id===me);
+  return `<h4>Νοικοκυριό</h4>
+  <p class="meta">Όσοι είναι στο ίδιο νοικοκυριό βλέπουν και αλλάζουν τα ίδια είδη, το ίδιο απόθεμα και την ίδια λίστα ψώνων. Στο ιστορικό φαίνεται ποιος έκανε κάθε κίνηση.</p>
+  ${mem}
+  <div class="tools" style="margin-top:8px"><input id="s_myname" maxlength="30" placeholder="Το όνομά μου" value="${esc(mine?mine.name:'')}"><button class="btn primary" style="width:auto;margin:0;padding:0 16px" data-act="savename2">Αποθήκευση</button></div>
+  <p class="meta" style="margin-top:14px">Κωδικός πρόσκλησης (δώστον σε όποιον θέλεις να μπει στο νοικοκυριό σου):</p>
+  <div class="catrow"><b style="letter-spacing:2px;font-size:18px">${esc(fmtCode(hh.code))}</b></div>
+  <button class="btn" data-act="copycode">Αντιγραφή κωδικού</button>
+  <button class="btn" data-act="newcode">Νέος κωδικός (ο παλιός παύει να ισχύει)</button>
+  <p class="meta" style="margin-top:14px">Έχεις κωδικό από άλλο νοικοκυριό;</p>
+  <div class="tools"><input id="hh_code" placeholder="XXXXX-XXXXX" autocapitalize="characters" autocomplete="off"><button class="btn primary" style="width:auto;margin:0;padding:0 16px" data-act="joinhh">Συμμετοχή</button></div>
+  ${shared()?'<button class="btn" data-act="leavehh">Αποχώρηση από το νοικοκυριό</button>':''}`;
 }
 function viewSet(){
   const used=c=>S.items.some(i=>i.cat===c);
@@ -532,6 +618,7 @@ function viewSet(){
   <div class="catrow"><span>${esc(user?user.email:'')}</span><span class="meta" id="syncset" style="margin:0 6px;white-space:nowrap">${syncLabel()}</span></div>
   <button class="btn" data-act="syncnow">Συγχρονισμός τώρα</button>
   <button class="btn" data-act="signout">Αποσύνδεση</button>
+  ${hhSection()}
   <h4>Αντίγραφο ασφαλείας</h4>
   <p class="meta">Τα δεδομένα σου αποθηκεύονται στον λογαριασμό σου και είναι διαθέσιμα σε κάθε συσκευή. Το αρχείο αντιγράφου είναι επιπλέον προστασία.</p>
   <button class="btn primary" data-act="export">Εξαγωγή αντιγράφου</button>
@@ -894,6 +981,16 @@ document.addEventListener('click',e=>{
     case 'tab':ui.tab=v;ui.f='all';render(true);break;
     case 'filter':ui.f=v;render();break;
     case 'hfilter':ui.hf=v;render();break;
+    case 'hwho':ui.hw=v;render();break;
+    case 'savename':saveName();break;
+    case 'savename2':{const n=($('#s_myname')||{}).value||'';if(!n.trim())return toast('Γράψε ένα όνομα');
+      hhCall('set_my_name',{p_name:n},'Αποθηκεύτηκε').then(d=>{if(d)render()});break}
+    case 'copycode':{const c=fmtCode(hh&&hh.code);
+      if(navigator.clipboard&&navigator.clipboard.writeText)navigator.clipboard.writeText(c).then(()=>toast('Ο κωδικός αντιγράφηκε'),()=>toast('Κωδικός: '+c));
+      else toast('Κωδικός: '+c);break}
+    case 'newcode':if(confirm('Ο παλιός κωδικός θα πάψει να ισχύει. Όσοι είναι ήδη μέσα μένουν. Να φτιαχτεί νέος;'))hhCall('new_invite_code',{},'Νέος κωδικός').then(d=>{if(d)render()});break;
+    case 'joinhh':joinHousehold();break;
+    case 'leavehh':leaveHousehold();break;
     case 'detail':detailSheet(id);break;
     case 'out':{const it=item(id);
       if(COUNT_UNITS.includes(it.unit)){if(stockOf(id)<=0)toast('Δεν υπάρχει απόθεμα');else addTx(id,'out',1)}
@@ -922,7 +1019,7 @@ document.addEventListener('click',e=>{
       });
       if(catAdded)pushCats();
       render();toast(n?`Προστέθηκαν ${n} είδη`:'Όλα τα βασικά είδη υπάρχουν ήδη');break}
-    case 'wipe':if(confirm('ΠΡΟΣΟΧΗ: θα διαγραφούν όλα τα είδη και οι κινήσεις από όλες τις συσκευές. Να συνεχίσω;')){
+    case 'wipe':if(confirm('ΠΡΟΣΟΧΗ: θα διαγραφούν όλα τα είδη και οι κινήσεις από όλες τις συσκευές'+(shared()?' και για όλα τα μέλη του νοικοκυριού':'')+'. Να συνεχίσω;')){
       S.items.forEach(i=>delItemRemote(i.id));S.items=[];S.tx=[];persist();render();toast('Τα δεδομένα διαγράφηκαν')}break;
     case 'scan':openScanner(onScanned,'Σάρωση προϊόντος');break;
     case 'scannext':openScanner(onScanned,'Σάρωση προϊόντος');break;
