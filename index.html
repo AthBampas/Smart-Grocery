@@ -134,7 +134,7 @@ const APP_URL=location.origin+location.pathname;
 let S=blank(),user=null,queue=[],sb=null,chan=null;
 let flushing=false,pulling=false,pullPending=false,pullTimer=null,retryTimer=null,syncErr=false,localVer=0;
 const mine=new Set();
-const ui={screen:'loading',tab:'stock',q:'',f:'all',cat:'',authMode:'login',authEmail:''};
+const ui={screen:'loading',tab:'stock',hf:'all',q:'',f:'all',cat:'',authMode:'login',authEmail:''};
 const item=id=>S.items.find(i=>i.id===id);
 
 function persist(){
@@ -491,10 +491,15 @@ function viewShop(){
     `<div class="row"><div class="info"><b>${esc(i.name)}</b><small>Απόθεμα ${fmt(i.st)} / ελάχ. ${fmt(i.min)} ${esc(i.unit)} · πρόταση: ${fmt(i.need)}</small></div><button class="rb add" style="width:auto;padding:0 12px;font-size:14px" data-act="buy" data-id="${i.id}">Αγόρασα</button></div>`).join('');
 }
 function viewHist(){
-  const a=[...S.tx].sort((x,y)=>Date.parse(y.date)-Date.parse(x.date)).slice(0,150);
-  if(!a.length)return '<div class="empty">Δεν υπάρχουν κινήσεις ακόμα.</div>';
-  return a.map(t=>{const it=item(t.itemId);if(!it)return '';
-    return `<div class="row"><div class="info"><b>${esc(it.name)}</b><small>${fmtDT(t.date)}${t.expiry?' · λήξη '+fmtDate(t.expiry):''}</small></div><div class="q ${t.type}">${t.type==='in'?'+':'−'}${fmt(t.qty)} ${esc(it.unit)}</div><button class="x" data-act="deltx" data-id="${t.id}" aria-label="Διαγραφή κίνησης">✕</button></div>`}).join('');
+  const chips=[['all','Όλα'],['in','Αγορές'],['out','Καταναλώσεις']].map(([k,l])=>`<button class="chip ${ui.hf===k?'on':''}" data-act="hfilter" data-v="${k}">${l}</button>`).join('');
+  const bar=`<div class="chips" style="margin-bottom:2px">${chips}</div>`;
+  const a=[...S.tx].filter(t=>ui.hf==='all'||t.type===ui.hf).sort((x,y)=>Date.parse(y.date)-Date.parse(x.date)).slice(0,200);
+  if(!a.length)return bar+'<div class="empty">'+(S.tx.length?'Καμία κίνηση σε αυτή την κατηγορία.':'Δεν υπάρχουν κινήσεις ακόμα.')+'</div>';
+  let last='';
+  return bar+a.map(t=>{const it=item(t.itemId);if(!it)return '';
+    const dk=localISO(new Date(t.date));let h='';
+    if(dk!==last){last=dk;const n=daysTo(dk);h=`<h4>${n===0?'Σήμερα':n===-1?'Χθες':fmtDate(dk)}</h4>`}
+    return h+`<div class="row"><div class="info"><b>${esc(it.name)}</b><small>${t.type==='in'?'Αγορά':'Κατανάλωση'} · ${new Date(t.date).toLocaleTimeString('el-GR',{hour:'2-digit',minute:'2-digit'})}${t.expiry?' · λήξη '+fmtDate(t.expiry):''}</small></div><div class="q ${t.type}">${t.type==='in'?'+':'−'}${fmt(t.qty)} ${esc(it.unit)}</div><button class="x" data-act="deltx" data-id="${t.id}" aria-label="Διαγραφή κίνησης">✕</button></div>`}).join('');
 }
 function viewSet(){
   const used=c=>S.items.some(i=>i.cat===c);
@@ -626,6 +631,7 @@ document.addEventListener('click',e=>{
   switch(a){
     case 'tab':ui.tab=v;ui.f='all';render(true);break;
     case 'filter':ui.f=v;render();break;
+    case 'hfilter':ui.hf=v;render();break;
     case 'detail':detailSheet(id);break;
     case 'out':{const it=item(id);
       if(COUNT_UNITS.includes(it.unit)){if(stockOf(id)<=0)toast('Δεν υπάρχει απόθεμα');else addTx(id,'out',1)}
