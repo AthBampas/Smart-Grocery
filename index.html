@@ -626,7 +626,7 @@ function viewHist(){
   return bar+a.map(t=>{const it=item(t.itemId);if(!it)return '';
     const dk=localISO(new Date(t.date));let h='';
     if(dk!==last){last=dk;const n=daysTo(dk);h=`<h4>${n===0?'Σήμερα':n===-1?'Χθες':fmtDate(dk)}</h4>`}
-    return h+`<div class="row"><div class="info"><b>${esc(it.name)}</b><small>${t.type==='in'?'Αγορά':'Κατανάλωση'} · ${new Date(t.date).toLocaleTimeString('el-GR',{hour:'2-digit',minute:'2-digit'})}${shared()?' · '+esc(whoName(t.by||me)):''}${t.expiry?' · λήξη '+fmtDate(t.expiry):''}</small></div><div class="q ${t.type}">${t.type==='in'?'+':'−'}${fmt(t.qty)} ${esc(it.unit)}</div><button class="x" data-act="deltx" data-id="${t.id}" aria-label="Διαγραφή κίνησης">✕</button></div>`}).join('');
+    return h+`<div class="row"><div class="info"><b>${esc(it.name)}</b><small>${t.type==='in'?'Αγορά':'Κατανάλωση'} · ${new Date(t.date).toLocaleTimeString('el-GR',{hour:'2-digit',minute:'2-digit'})}${(shared()||S.tx.some(x=>x.by==='gone'))?' · '+esc(whoName(t.by||me)):''}${t.expiry?' · λήξη '+fmtDate(t.expiry):''}</small></div><div class="q ${t.type}">${t.type==='in'?'+':'−'}${fmt(t.qty)} ${esc(it.unit)}</div><button class="x" data-act="deltx" data-id="${t.id}" aria-label="Διαγραφή κίνησης">✕</button></div>`}).join('');
 }
 function hhSection(){
   if(!hh)return `<h4>Νοικοκυριό</h4><p class="meta">Το νοικοκυριό φορτώνει όταν υπάρχει σύνδεση με το internet.</p>`;
